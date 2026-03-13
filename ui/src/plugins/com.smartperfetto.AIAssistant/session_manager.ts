@@ -154,12 +154,53 @@ export class SessionManager {
   }
 
   /**
+   * F4: Trim sqlResult.rows in messages before serialization to reduce localStorage pressure.
+   * P2-9: Also strip expandableData, chartData, and metricData to prevent localStorage bloat.
+   * Returns a lightweight copy — the original messages in memory are untouched.
+   */
+  private trimStorageMessages(messages: Message[]): Message[] {
+    const MAX_ROWS_PERSISTED = 50;
+    return messages.map(msg => {
+      // P2-9: Strip large data fields that are not essential for session restore
+      const trimmed: Message = {
+        ...msg,
+        chartData: undefined,
+        metricData: undefined,
+      };
+
+      if (trimmed.sqlResult) {
+        trimmed.sqlResult = {
+          ...trimmed.sqlResult,
+          expandableData: undefined,  // P2-9: expandableData can be very large
+        };
+        if (trimmed.sqlResult.rows && trimmed.sqlResult.rows.length > MAX_ROWS_PERSISTED) {
+          trimmed.sqlResult = {
+            ...trimmed.sqlResult,
+            rows: trimmed.sqlResult.rows.slice(0, MAX_ROWS_PERSISTED),
+            rowCount: trimmed.sqlResult.rowCount, // preserve original count
+          };
+        }
+      }
+
+      return trimmed;
+    });
+  }
+
+  /**
    * Save all Sessions storage to localStorage.
    * Includes size protection to avoid exceeding browser storage limits.
    */
   saveSessionsStorage(storage: SessionsStorage): void {
     try {
-      const serialized = JSON.stringify(storage);
+      // F4: Create a trimmed copy to reduce storage size
+      const trimmedStorage: SessionsStorage = { byTrace: {} };
+      for (const fingerprint in storage.byTrace) {
+        trimmedStorage.byTrace[fingerprint] = storage.byTrace[fingerprint].map(session => ({
+          ...session,
+          messages: this.trimStorageMessages(session.messages),
+        }));
+      }
+      const serialized = JSON.stringify(trimmedStorage);
       const sizeBytes = new Blob([serialized]).size;
       const MAX_STORAGE_BYTES = 4 * 1024 * 1024; // 4MB safety limit
 
@@ -168,10 +209,10 @@ export class SessionManager {
           `[SessionManager] Storage size ${(sizeBytes / 1024 / 1024).toFixed(1)}MB exceeds ${MAX_STORAGE_BYTES / 1024 / 1024}MB limit, trimming old sessions`
         );
         // Collect all sessions across traces with their fingerprints
-        const allSessions: Array<{fingerprint: string; index: number; lastActiveAt: number}> = [];
-        for (const fingerprint in storage.byTrace) {
-          storage.byTrace[fingerprint].forEach((session, index) => {
-            allSessions.push({fingerprint, index, lastActiveAt: session.lastActiveAt});
+        const allSessions: Array<{fingerprint: string; sessionId: string; lastActiveAt: number}> = [];
+        for (const fingerprint in trimmedStorage.byTrace) {
+          trimmedStorage.byTrace[fingerprint].forEach((session) => {
+            allSessions.push({fingerprint, sessionId: session.sessionId, lastActiveAt: session.lastActiveAt});
           });
         }
         // Sort oldest first
@@ -179,25 +220,25 @@ export class SessionManager {
 
         // Remove oldest sessions one at a time until under limit
         for (const entry of allSessions) {
-          const sessions = storage.byTrace[entry.fingerprint];
+          const sessions = trimmedStorage.byTrace[entry.fingerprint];
           if (!sessions) continue;
           const sessionIdx = sessions.findIndex(
-            s => s.lastActiveAt === entry.lastActiveAt
+            s => s.sessionId === entry.sessionId
           );
           if (sessionIdx !== -1) {
             sessions.splice(sessionIdx, 1);
             if (sessions.length === 0) {
-              delete storage.byTrace[entry.fingerprint];
+              delete trimmedStorage.byTrace[entry.fingerprint];
             }
           }
-          const trimmedSerialized = JSON.stringify(storage);
-          if (new Blob([trimmedSerialized]).size <= MAX_STORAGE_BYTES) {
-            localStorage.setItem(SESSIONS_KEY, trimmedSerialized);
+          const evictedSerialized = JSON.stringify(trimmedStorage);
+          if (new Blob([evictedSerialized]).size <= MAX_STORAGE_BYTES) {
+            localStorage.setItem(SESSIONS_KEY, evictedSerialized);
             return;
           }
         }
         // If still too large after trimming all, save what we have
-        localStorage.setItem(SESSIONS_KEY, JSON.stringify(storage));
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmedStorage));
       } else {
         localStorage.setItem(SESSIONS_KEY, serialized);
       }

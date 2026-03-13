@@ -129,6 +129,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     sseRetryCount: 0,
     sseMaxRetries: 5,
     sseLastEventTime: null,
+    sseLastEventId: null,
     // Error Aggregation Initialization
     collectedErrors: [],
     // Output structure optimization
@@ -1915,8 +1916,12 @@ Click ⚙️ to change settings.`;
     this.state.displayedSkillProgress.clear();
     this.state.collectedErrors = [];
 
-    // Add round separator when this is a follow-up round (prior assistant messages exist)
-    const hasPriorResults = this.state.messages.some(
+    // Add round separator when this is a follow-up round (prior analysis results exist).
+    // P2-1: Exclude welcome/system-generated assistant messages — only count as
+    // prior results when there has been at least one user message (i.e., an analysis
+    // round actually ran, not just a welcome message).
+    const hasUserMessages = this.state.messages.some((msg) => msg.role === 'user');
+    const hasPriorResults = hasUserMessages && this.state.messages.some(
       (msg) => msg.role === 'assistant' && msg.flowTag !== 'round_separator'
     );
     if (hasPriorResults) {
@@ -2915,6 +2920,14 @@ Output MUST follow this exact markdown structure:
         this.state.agentSessionId = null;
         this.clearAgentObservability();
         this.saveCurrentSession();
+        // P1-F1: Notify user that context continuity was lost
+        this.addMessage({
+          id: this.generateId(),
+          role: 'assistant',
+          content: `⚠️ **上下文已重置** — 之前的分析会话已过期或后端已重启，本次将以新会话开始分析。之前的对话上下文不会被继承。`,
+          timestamp: Date.now(),
+        });
+        m.redraw();
         return;
       }
 
@@ -2999,6 +3012,9 @@ Output MUST follow this exact markdown structure:
             timestamp: Date.now(),
           });
           this.state.backendTraceId = null;
+          // P1-F6: Also clear stale agentSessionId when trace is gone
+          this.state.agentSessionId = null;
+          this.clearAgentObservability();
           // Note: Don't return early - let finally block handle cleanup
           throw new Error('TRACE_NOT_FOUND');  // Will be caught and cleanup will run
         }
@@ -3095,10 +3111,28 @@ Output MUST follow this exact markdown structure:
     this.setLoadingState(false);
     this.resetStreamingFlow();
     this.resetStreamingAnswer();
+    // P1-4: Best-effort notify backend to stop consuming tokens
+    if (this.state.agentSessionId) {
+      const cancelUrl = buildAssistantApiV1Url(
+        this.state.settings.backendUrl,
+        `/${this.state.agentSessionId}/cancel`,
+      );
+      this.fetchBackend(cancelUrl, {method: 'POST'}).catch(() => {});
+    }
+    // P2-10: Mark orphaned streaming-flow messages as cancelled
+    for (const msg of this.state.messages) {
+      if (msg.flowTag === 'streaming_flow') {
+        msg.content = '_分析已取消_';
+      }
+    }
+    // P1-F2: Clear agentSessionId after cancellation to avoid resuming a mid-cancelled session
+    this.state.agentSessionId = null;
+    this.clearAgentObservability();
+    this.saveCurrentSession();
     this.addMessage({
       id: this.generateId(),
       role: 'assistant',
-      content: '分析已取消。',
+      content: '分析已取消。下次分析将以新会话开始。',
       timestamp: Date.now(),
     });
     m.redraw();
@@ -3113,7 +3147,7 @@ Output MUST follow this exact markdown structure:
    * With automatic reconnection and exponential backoff
    */
   private async listenToAgentSSE(sessionId: string): Promise<void> {
-    const apiUrl = buildAssistantApiV1Url(this.state.settings.backendUrl, `/${sessionId}/stream`);
+    const baseApiUrl = buildAssistantApiV1Url(this.state.settings.backendUrl, `/${sessionId}/stream`);
 
     // Cancel any existing connection
     this.cancelSSEConnection();
@@ -3125,6 +3159,7 @@ Output MUST follow this exact markdown structure:
     // Mark as connecting
     this.state.sseConnectionState = 'connecting';
     this.state.sseRetryCount = 0;
+    this.state.sseLastEventId = null;  // Reset for fresh connection; preserved across reconnects
     m.redraw();
 
     // Main connection loop with retry logic
@@ -3136,8 +3171,27 @@ Output MUST follow this exact markdown structure:
           return;
         }
 
+        // F3: Append lastEventId query param on reconnect for event replay
+        const apiUrl = this.state.sseLastEventId !== null
+          ? `${baseApiUrl}${baseApiUrl.includes('?') ? '&' : '?'}lastEventId=${this.state.sseLastEventId}`
+          : baseApiUrl;
+
         const response = await this.fetchBackend(apiUrl, { signal });
         if (!response.ok) {
+          // P2-2: 4xx errors are not transient (bad request, not found, etc.) — don't retry
+          if (response.status >= 400 && response.status < 500) {
+            console.error(`[AIPanel] SSE got ${response.status} — not retryable, giving up`);
+            this.state.sseConnectionState = 'disconnected';
+            this.setLoadingState(false);
+            this.addMessage({
+              id: this.generateId(),
+              role: 'assistant',
+              content: `**Connection Error:** ${response.status} ${response.statusText}`,
+              timestamp: Date.now(),
+            });
+            m.redraw();
+            return;
+          }
           throw new Error(`Agent SSE connection failed: ${response.statusText}`);
         }
 
@@ -3190,7 +3244,13 @@ Output MUST follow this exact markdown structure:
             if (!line) continue;
             if (line.startsWith(':')) continue; // Skip keep-alive comments
 
-            if (line.startsWith('event:')) {
+            if (line.startsWith('id:')) {
+              // F3: Track last event sequence ID for replay on reconnect
+              const id = parseInt(line.replace('id:', '').trim(), 10);
+              if (!isNaN(id)) {
+                this.state.sseLastEventId = id;
+              }
+            } else if (line.startsWith('event:')) {
               currentEventType = line.replace('event:', '').trim();
             } else if (line.startsWith('data:')) {
               const dataStr = line.replace('data:', '').trim();

@@ -235,6 +235,7 @@ export interface AIPanelState {
   sseRetryCount: number;  // Current retry attempt count
   sseMaxRetries: number;  // Maximum retry attempts (default: 5)
   sseLastEventTime: number | null;  // Last received event timestamp
+  sseLastEventId: number | null;  // F3: Last received SSE event sequence ID for replay on reconnect
   // Error Aggregation (Phase 3: Error Summary Display)
   collectedErrors: Array<{
     skillId: string;

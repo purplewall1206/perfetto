@@ -659,6 +659,100 @@ export class SceneReconstructionHandler {
     // Use existing pinTracksFromInstructions method
     await this.ctx.pinTracksFromInstructions(allInstructions, activeProcesses);
   }
+
+  /**
+   * Pin tracks for a specific event type (on-demand, per-event).
+   * Called when user clicks a row in the clean_timeline table.
+   *
+   * @param eventType - The event_type from clean_timeline (e.g. 'cold_start', 'scroll')
+   * @param appPackage - Optional app package for process-scoped pinning
+   */
+  pinTracksForEvent(eventType: string, appPackage?: string): void {
+    const pins = SCENE_PIN_MAPPING[eventType];
+    if (!pins || pins.length === 0) return;
+
+    const activeProcesses = appPackage
+      ? [{processName: appPackage, frameCount: 1}]
+      : [];
+
+    console.log('[SceneReconstruction] Pinning tracks for event:', eventType, appPackage);
+    this.ctx.pinTracksFromInstructions(pins, activeProcesses).catch((err) => {
+      console.warn('[SceneReconstruction] Failed to pin tracks for event:', eventType, err);
+    });
+  }
+
+  /**
+   * Deep-dive into a specific event by executing the appropriate skill.
+   * Returns structured analysis results for the event's time range.
+   *
+   * @param analysisId - The scene reconstruction analysis session ID
+   * @param scene - The scene to deep-dive into
+   */
+  async deepDiveEvent(analysisId: string, scene: SceneData): Promise<void> {
+    try {
+      const apiKey = (this.ctx.settings.backendApiKey || '').trim();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (apiKey) {
+        headers['x-api-key'] = apiKey;
+        headers.Authorization = `Bearer ${apiKey}`;
+      }
+
+      const response = await fetch(
+        buildAssistantApiV1Url(
+          this.ctx.settings.backendUrl,
+          `/scene-reconstruct/${analysisId}/deep-dive`,
+        ),
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            eventId: scene.metadata?.eventId,
+            eventType: scene.type,
+            startTs: String(scene.startTs),
+            endTs: String(scene.endTs ?? scene.startTs),
+            appPackage: scene.appPackage,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(`HTTP ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        const timeLabel = scene.metadata?.timeOffset ?? formatSceneTimestamp(scene.startTs);
+        // Render deep-dive results as a text message with summary
+        let content = `**${data.description}** (${timeLabel})\n\n`;
+        if (Array.isArray(data.result) && data.result.length > 0) {
+          content += `已返回 ${data.result.length} 组分析结果。`;
+        } else {
+          content += '无详细数据。';
+        }
+        this.ctx.addMessage({
+          id: this.ctx.generateId(),
+          role: 'assistant',
+          content,
+          timestamp: Date.now(),
+        });
+        m.redraw();
+      } else {
+        throw new Error(data.error || 'Deep-dive analysis failed');
+      }
+    } catch (error: any) {
+      console.error('[SceneReconstruction] Deep-dive error:', error);
+      this.ctx.addMessage({
+        id: this.ctx.generateId(),
+        role: 'assistant',
+        content: `深入分析失败：${error.message || '未知错误'}`,
+        timestamp: Date.now(),
+      });
+      m.redraw();
+    }
+  }
 }
 
 /**
