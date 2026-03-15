@@ -69,6 +69,7 @@ import {
   handleSSEEvent as handleSSEEventExternal,
   SSEHandlerContext,
 } from './sse_event_handlers';
+import {createOverlayTrack} from './track_overlay';
 import {
   subscribeClearChat,
   subscribeOpenSettings,
@@ -2096,6 +2097,15 @@ Click ⚙️ to change settings.`;
         };
       },
       getInterventionState: () => this.state.interventionState,
+      // Track overlay — create timeline tracks when overlay-eligible data arrives
+      onOverlayDataReceived: (overlayId, columns, rows) => {
+        if (this.trace) {
+          createOverlayTrack(this.trace, overlayId, columns, rows).catch(
+            (e) =>
+              console.error(`[AIPanel] Overlay ${overlayId} failed:`, e),
+          );
+        }
+      },
     };
   }
 

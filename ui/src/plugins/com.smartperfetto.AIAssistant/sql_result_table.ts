@@ -1234,7 +1234,7 @@ export class SqlResultTable implements m.ClassComponent<SqlResultTableAttrs> {
       trace.scrollTo({
         time: {
           start: Time.fromRaw(timestampNs),
-          end: Time.fromRaw(timestampNs + BigInt(10000000)), // 结束时间为开始时间+10ms（更宽的视野）
+          end: Time.fromRaw(timestampNs + BigInt(50000000)), // 结束时间为开始时间+50ms（覆盖约 3 帧 @60Hz）
           behavior: 'focus', // 智能缩放以聚焦到该时间点
         },
       });

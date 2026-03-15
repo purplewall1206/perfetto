@@ -50,6 +50,7 @@ import {
   envelopeToSqlQueryResult,
 } from './generated';
 import {CONTRACT_ALIASES} from './conclusion_contract_aliases';
+import {STEP_TO_OVERLAY} from './track_overlay';
 
 type AnalysisHypothesisItem = {
   status?: string;
@@ -381,6 +382,10 @@ export interface SSEHandlerContext {
   setInterventionState?: (state: Partial<InterventionState>) => void;
   /** Get current intervention state */
   getInterventionState?: () => InterventionState;
+
+  // Track overlay - callback when overlay-eligible data arrives
+  /** Called with columns+rows from skill steps that have timeline overlay configs */
+  onOverlayDataReceived?: (overlayId: string, columns: string[], rows: unknown[][]) => void;
 }
 
 /**
@@ -2353,6 +2358,17 @@ export function handleDataEvent(
     pushStreamingOutput(ctx, describeEnvelopeOutput(envelope));
 
     renderDataEnvelope(envelope, ctx);
+
+    // Trigger track overlay when overlay-eligible data arrives
+    if (envelope.meta.stepId && envelope.data.columns?.length
+        && envelope.data.rows?.length && ctx.onOverlayDataReceived) {
+      const overlayId = STEP_TO_OVERLAY.get(envelope.meta.stepId);
+      if (overlayId) {
+        ctx.onOverlayDataReceived(
+          overlayId, envelope.data.columns, envelope.data.rows,
+        );
+      }
+    }
   }
 
   return {};
