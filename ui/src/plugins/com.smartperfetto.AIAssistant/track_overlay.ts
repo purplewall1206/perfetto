@@ -165,6 +165,7 @@ const OVERLAY_CONFIGS = new Map<OverlayId, OverlayConfig>([
  */
 export const STEP_TO_OVERLAY = new Map<string, OverlayId>([
   ['get_app_jank_frames', 'jank'],
+  ['batch_frame_root_cause', 'jank'],
   ['clean_timeline', 'scene_timeline'],
   ['pipeline_key_slices_overlay', 'pipeline_slices'],
 ]);
