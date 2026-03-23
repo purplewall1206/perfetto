@@ -321,6 +321,13 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
       }
       if (this.state.backendTraceId) {
         this.detectScenesQuick();
+      } else if (appBackendUploadState === 'uploading') {
+        // Background upload still in progress — listen for completion
+        // Without this, restored sessions get stuck in disconnected state
+        this.listenForBackendUpload();
+      } else if (engineInRpcMode) {
+        // In RPC mode but no backendTraceId — try to register
+        this.autoRegisterWithBackend();
       }
       m.redraw();
       return;
