@@ -3430,3 +3430,148 @@ tr.detail-row {
   color: var(--chat-text-muted);
   font-style: italic;
 }
+
+// =============================================================================
+// Comparison Mode
+// =============================================================================
+
+.ai-icon-btn.active {
+  color: #4285f4;
+  background: rgba(66, 133, 244, 0.1);
+  border-radius: 4px;
+}
+
+.ai-comparison-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: linear-gradient(90deg, rgba(66, 133, 244, 0.08), rgba(234, 67, 53, 0.08));
+  border-bottom: 1px solid var(--chat-border);
+  font-size: 12px;
+  gap: 8px;
+}
+
+.ai-comparison-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.ai-comparison-label {
+  display: flex;
+  align-items: center;
+  font-weight: 500;
+  color: var(--chat-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-comparison-hint {
+  color: var(--chat-text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-comparison-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ai-comparison-switch {
+  padding: 2px 10px;
+  border: 1px solid #4285f4;
+  border-radius: 4px;
+  background: transparent;
+  color: #4285f4;
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(66, 133, 244, 0.1);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.ai-comparison-close {
+  padding: 2px 8px;
+  border: 1px solid var(--chat-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--chat-text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+
+  &:hover {
+    background: rgba(234, 67, 53, 0.1);
+    color: #ea4335;
+    border-color: #ea4335;
+  }
+}
+
+// Trace Picker Modal
+.ai-trace-picker {
+  max-width: 480px;
+  width: 90%;
+}
+
+.ai-trace-picker-loading {
+  padding: 20px;
+  text-align: center;
+  color: var(--chat-text-muted);
+}
+
+.ai-trace-picker-list {
+  padding: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.ai-trace-picker-item {
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(66, 133, 244, 0.08);
+  }
+
+  &.selected {
+    background: rgba(66, 133, 244, 0.15);
+    border: 1px solid rgba(66, 133, 244, 0.3);
+  }
+}
+
+.ai-trace-picker-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--chat-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-trace-picker-item-meta {
+  font-size: 11px;
+  color: var(--chat-text-muted);
+  margin-top: 2px;
+}
+
+.ai-trace-picker-empty {
+  padding: 20px 12px;
+  text-align: center;
+  color: var(--chat-text-muted);
+  font-size: 13px;
+}

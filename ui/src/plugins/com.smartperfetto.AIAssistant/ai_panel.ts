@@ -53,6 +53,7 @@ import {
   DEFAULT_SETTINGS,
   PENDING_BACKEND_TRACE_KEY,
   PRESET_QUESTIONS,
+  COMPARISON_PRESET_QUESTIONS,
   SelectionContext,
   SelectionTrackInfo,
 } from './types';
@@ -65,6 +66,9 @@ import {
 import {sessionManager} from './session_manager';
 import {mermaidRenderer} from './mermaid_renderer';
 import {buildAssistantApiV1Url} from './assistant_api_v1';
+import {
+  clearComparisonState,
+} from './comparison_state_manager';
 import {
   handleSSEEvent as handleSSEEventExternal,
   SSEHandlerContext,
@@ -145,6 +149,12 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     streamingFlow: createStreamingFlowState(),
     // Incremental final answer stream state
     streamingAnswer: createStreamingAnswerState(),
+    // Comparison mode state
+    referenceTraceId: null,
+    referenceTraceName: null,
+    isReferenceActive: false,
+    showTracePicker: false,
+    comparisonTraceLoading: false,
   };
 
   private unsubscribeClearChat?: () => void;
@@ -154,6 +164,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
   private messagesContainer: HTMLElement | null = null;
   private lastMessageCount = 0;
   private scrollThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  private availableTraces: Array<{id: string; originalName?: string; uploadedAt?: string; size?: number}> = [];
   // Debounced session save (P1-8): coalesce rapid addMessage() calls
   private saveSessionTimer: ReturnType<typeof setTimeout> | null = null;
   private beforeUnloadHandler: (() => void) | null = null;
@@ -805,7 +816,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
             // Preset question buttons - only show when connected to backend
             isInRpcMode && !this.state.isLoading
               ? m('div.ai-preset-questions', [
-                  ...PRESET_QUESTIONS.map(preset =>
+                  ...(this.state.referenceTraceId ? COMPARISON_PRESET_QUESTIONS : PRESET_QUESTIONS).map(preset =>
                     m(`button.ai-preset-btn${preset.isTeaching ? '.ai-teaching-btn' : ''}`, {
                       onclick: () => this.sendPresetQuestion(preset.question),
                       title: preset.isTeaching ? '检测当前 Trace 的渲染管线类型，自动 Pin 关键泳道' : preset.question,
@@ -830,6 +841,20 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
               : null,
           ]),
           m('div.ai-header-right', [
+            // Comparison mode button — only visible when backend trace is available
+            isInRpcMode && hasBackendTrace
+              ? m('button.ai-icon-btn', {
+                  onclick: () => {
+                    this.state.showTracePicker = true;
+                    this.fetchAvailableTraces();
+                    m.redraw();
+                  },
+                  title: this.state.referenceTraceId
+                    ? `对比模式: ${this.state.referenceTraceName || 'Reference Trace'}`
+                    : '对比...',
+                  class: this.state.referenceTraceId ? 'active' : '',
+                }, m('i.pf-icon', 'compare_arrows'))
+              : null,
             // Connection status indicator (read-only, no upload button in auto-RPC mode)
             m('span.ai-icon-btn', {
               title: isInRpcMode
@@ -847,6 +872,33 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
             }, m('i.pf-icon', 'settings')),
           ]),
         ]),
+
+        // Comparison mode indicator bar
+        this.state.referenceTraceId
+          ? m('div.ai-comparison-bar', [
+              m('div.ai-comparison-info', [
+                m('span.ai-comparison-label', [
+                  m('i.pf-icon', {style: 'font-size: 14px; margin-right: 4px;'}, 'compare_arrows'),
+                  `对比: ${this.state.referenceTraceName || '参考 Trace'}`,
+                ]),
+              ]),
+              m('div.ai-comparison-actions', [
+                m('button.ai-comparison-switch', {
+                  onclick: () => this.switchComparisonTrace(),
+                  title: '在新标签页中打开参考 Trace 进行视觉验证',
+                }, '验证'),
+                m('button.ai-comparison-close', {
+                  onclick: () => this.exitComparisonMode(),
+                  title: '退出对比模式',
+                }, '\u00D7'),
+              ]),
+            ])
+          : null,
+
+        // Trace picker modal
+        this.state.showTracePicker
+          ? this.renderTracePicker()
+          : null,
 
         // Main content area with optional sidebar
         m('div.ai-content-wrapper', {
@@ -2994,6 +3046,11 @@ Output MUST follow this exact markdown structure:
         },
       };
 
+      // Comparison mode: include reference trace ID
+      if (this.state.referenceTraceId) {
+        requestBody.referenceTraceId = this.state.referenceTraceId;
+      }
+
       // Capture current Perfetto selection (area / slice) and include in request
       const selectionContext = await this.captureSelectionContext();
       if (selectionContext) {
@@ -5062,5 +5119,153 @@ Output MUST follow this exact markdown structure:
       this.scrollThrottleTimer = null;
       this.scrollToBottom();
     }, 100);
+  }
+
+  // ==========================================================================
+  // Comparison Mode
+  // ==========================================================================
+
+  /** Fetch available traces from backend for the trace picker. */
+  private async fetchAvailableTraces(): Promise<void> {
+    this.state.comparisonTraceLoading = true;
+    m.redraw();
+    try {
+      const url = `${this.state.settings.backendUrl.replace(/\/+$/, '')}/api/traces`;
+      const response = await this.fetchBackend(url);
+      if (response.ok) {
+        const data = await response.json();
+        this.availableTraces = (data.traces || []).map((t: any) => ({
+          id: t.id,
+          originalName: t.originalName || t.name,
+          uploadedAt: t.uploadedAt,
+          size: t.size,
+        }));
+      }
+    } catch (e) {
+      console.warn('[AIPanel] Failed to fetch traces:', e);
+      this.availableTraces = [];
+    } finally {
+      this.state.comparisonTraceLoading = false;
+      m.redraw();
+    }
+  }
+
+  /** Render trace picker modal for selecting a reference trace. */
+  private renderTracePicker(): m.Vnode {
+    return m('div.ai-modal-overlay', {
+      onclick: (e: Event) => {
+        if ((e.target as HTMLElement).classList.contains('ai-modal-overlay')) {
+          this.state.showTracePicker = false;
+          m.redraw();
+        }
+      },
+    }, m('div.ai-modal.ai-trace-picker', [
+      m('div.ai-modal-header', [
+        m('span', '选择对比 Trace'),
+        m('button.ai-modal-close', {
+          onclick: () => { this.state.showTracePicker = false; m.redraw(); },
+        }, '\u00D7'),
+      ]),
+      m('div.ai-modal-body', [
+        this.state.comparisonTraceLoading
+          ? m('div.ai-trace-picker-loading', '加载 Trace 列表中...')
+          : m('div.ai-trace-picker-list', [
+              // Show available traces from backend
+              this.availableTraces.length > 0
+                ? this.availableTraces
+                    .filter(t => t.id !== this.state.backendTraceId) // Exclude current trace
+                    .map(t => m('div.ai-trace-picker-item', {
+                      key: t.id,
+                      onclick: () => this.enterComparisonMode(t.id, t.originalName || t.id),
+                      class: this.state.referenceTraceId === t.id ? 'selected' : '',
+                    }, [
+                      m('div.ai-trace-picker-item-name', t.originalName || t.id),
+                      m('div.ai-trace-picker-item-meta', [
+                        t.uploadedAt ? new Date(t.uploadedAt).toLocaleString() : '',
+                        t.size ? ` · ${(t.size / 1024 / 1024).toFixed(1)}MB` : '',
+                      ].filter(Boolean).join('')),
+                    ]))
+                : m('div.ai-trace-picker-empty',
+                    '没有可用的参考 Trace。请先上传另一个 Trace 文件到后端。'),
+            ]),
+      ]),
+      m('div.ai-modal-footer', [
+        this.state.referenceTraceId
+          ? m('button.ai-btn-secondary', {
+              onclick: () => this.exitComparisonMode(),
+            }, '退出对比')
+          : null,
+        m('button.ai-btn-secondary', {
+          onclick: () => { this.state.showTracePicker = false; m.redraw(); },
+        }, '取消'),
+      ]),
+    ]));
+  }
+
+  /** Enter comparison mode with a reference trace. */
+  private async enterComparisonMode(refTraceId: string, refTraceName: string): Promise<void> {
+    this.state.referenceTraceId = refTraceId;
+    this.state.referenceTraceName = refTraceName;
+    this.state.showTracePicker = false;
+    this.state.isReferenceActive = false;
+
+    this.addMessage({
+      id: this.generateId(),
+      role: 'system',
+      content: `**对比模式已激活**\n\n` +
+        `- 主 Trace: ${this.trace?.traceInfo?.traceTitle || '当前 Trace'}\n` +
+        `- 参考 Trace: ${refTraceName}\n\n` +
+        `你可以直接提问，AI 会同时分析两个 Trace 并输出对比结论。\n` +
+        `点击 **[切换]** 可在 Perfetto 中查看参考 Trace。`,
+      timestamp: Date.now(),
+    });
+    m.redraw();
+  }
+
+  /** Exit comparison mode. */
+  private exitComparisonMode(): void {
+    this.state.referenceTraceId = null;
+    this.state.referenceTraceName = null;
+    this.state.isReferenceActive = false;
+    this.state.showTracePicker = false;
+    this.state.comparisonTraceLoading = false;
+    clearComparisonState();
+
+    this.addMessage({
+      id: this.generateId(),
+      role: 'system',
+      content: '已退出对比模式，回到单 Trace 分析。',
+      timestamp: Date.now(),
+    });
+    m.redraw();
+  }
+
+  /** Open the reference trace in a new browser tab for visual verification.
+   *  In-tab trace switching is deferred — openTraceFromUrl would re-import
+   *  the trace into trace_processor (duplicate data risk) and requires
+   *  downloading the full file (slow for large traces). New-tab approach
+   *  is zero-risk and keeps the current AI analysis session undisturbed. */
+  private switchComparisonTrace(): void {
+    if (!this.state.referenceTraceId) return;
+
+    const targetTraceId = this.state.isReferenceActive
+      ? this.state.backendTraceId  // Switch back to primary → open primary in new tab
+      : this.state.referenceTraceId;  // Switch to reference → open reference in new tab
+
+    if (!targetTraceId) return;
+
+    // Open the trace file download URL — browser/Perfetto will handle it in a new tab
+    const fileUrl = `${this.state.settings.backendUrl.replace(/\/+$/, '')}/api/traces/${targetTraceId}/file`;
+    window.open(fileUrl, '_blank');
+
+    this.addMessage({
+      id: this.generateId(),
+      role: 'system',
+      content: this.state.isReferenceActive
+        ? `已在新标签页中打开主 Trace，可在那里视觉验证 AI 的分析结论。`
+        : `已在新标签页中打开参考 Trace: **${this.state.referenceTraceName}**，可在那里视觉验证 AI 的对比结论。\n\n当前标签页的 AI 对话和分析不受影响。`,
+      timestamp: Date.now(),
+    });
+    m.redraw();
   }
 }

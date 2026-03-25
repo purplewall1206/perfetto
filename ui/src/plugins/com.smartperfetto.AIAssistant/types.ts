@@ -253,6 +253,12 @@ export interface AIPanelState {
   interventionState: InterventionState;
   streamingFlow: StreamingFlowState;
   streamingAnswer: StreamingAnswerState;
+  // Comparison mode state
+  referenceTraceId: string | null;      // Backend trace ID of the reference trace
+  referenceTraceName: string | null;    // Display name of the reference trace
+  isReferenceActive: boolean;           // Whether Perfetto is currently showing the reference trace
+  showTracePicker: boolean;             // Whether trace picker modal is visible
+  comparisonTraceLoading: boolean;      // Loading state for reference trace processor
 }
 
 /**
@@ -300,6 +306,14 @@ export interface AISession {
   summary?: string;               // AI-generated conversation summary
   pinnedResults?: PinnedResult[]; // Pinned query results
   bookmarks?: NavigationBookmark[]; // Navigation bookmarks
+  /** Session type: 'single' for normal, 'comparison' for dual-trace analysis */
+  type?: 'single' | 'comparison';
+  /** Reference trace fingerprint (comparison mode only) */
+  referenceTraceFingerprint?: string;
+  /** Reference trace backend ID (comparison mode only) */
+  referenceBackendTraceId?: string;
+  /** Reference trace display name (comparison mode only) */
+  referenceTraceName?: string;
 }
 
 /**
@@ -351,6 +365,14 @@ export const PRESET_QUESTIONS: PresetQuestion[] = [
   {label: '滑动', question: '分析滑动性能', icon: 'swipe'},
   {label: '启动', question: '分析启动性能', icon: 'rocket_launch'},
   {label: '跳转', question: '分析跳转性能', icon: 'open_in_new'},
+];
+
+/** Preset questions for comparison mode. */
+export const COMPARISON_PRESET_QUESTIONS: PresetQuestion[] = [
+  {label: '对比滑动', question: '对比两个 Trace 的滑动性能', icon: 'compare_arrows'},
+  {label: '对比启动', question: '对比两个 Trace 的启动性能', icon: 'compare_arrows'},
+  {label: '对比帧率', question: '对比两个 Trace 的帧率分布和 Jank 情况', icon: 'compare_arrows'},
+  {label: '对比 CPU', question: '对比两个 Trace 的 CPU 调度和频率', icon: 'compare_arrows'},
 ];
 
 // =============================================================================
