@@ -183,13 +183,15 @@ export function formatCellValue(
   }
 
   // Get the value in the correct unit (for duration/timestamp)
+  // SQL printf('%d', ...) returns strings for large integers — parse them as numbers for formatting.
   let numValue: number | undefined;
   if (typeof value === 'number') {
     numValue = value;
-    // Convert to nanoseconds if unit is specified
-    if (column.unit && (column.type === 'timestamp' || column.type === 'duration')) {
-      numValue = toNanoseconds(value, column.unit);
-    }
+  } else if (typeof value === 'string' && value !== '' && !isNaN(Number(value))) {
+    numValue = Number(value);
+  }
+  if (numValue !== undefined && column.unit && (column.type === 'timestamp' || column.type === 'duration')) {
+    numValue = toNanoseconds(numValue, column.unit);
   }
 
   // Format based on column format (explicit format takes precedence)
