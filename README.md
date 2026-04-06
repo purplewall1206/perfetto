@@ -6,6 +6,16 @@
 > unmodified from upstream. Licensed under Apache 2.0 (same as upstream).
 >
 > **Upstream sync:** This fork periodically merges from `google/perfetto` main branch.
+>
+> ---
+>
+> **Fork 说明：** 本仓库是 [google/perfetto](https://github.com/google/perfetto) 的 fork，
+> 由 [SmartPerfetto](https://github.com/Gracker/SmartPerfetto) 维护。
+>
+> **改动内容：** 新增了 AI 分析面板插件（`ui/src/plugins/com.smartperfetto.AIAssistant/`），
+> 其余 Perfetto 代码与上游保持一致。许可证：Apache 2.0（与上游相同）。
+>
+> **上游同步：** 本 fork 定期从 `google/perfetto` main 分支合并更新。
 
 ---
 
