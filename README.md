@@ -1,3 +1,14 @@
+> **Fork Notice:** This is a fork of [google/perfetto](https://github.com/google/perfetto)
+> maintained by [SmartPerfetto](https://github.com/Gracker/SmartPerfetto).
+>
+> **What's changed:** A custom UI plugin (`ui/src/plugins/com.smartperfetto.AIAssistant/`)
+> that adds an AI-powered analysis panel to the Perfetto UI. All other Perfetto code is
+> unmodified from upstream. Licensed under Apache 2.0 (same as upstream).
+>
+> **Upstream sync:** This fork periodically merges from `google/perfetto` main branch.
+
+---
+
 # Perfetto - System profiling, app tracing and trace analysis
 
 Perfetto is an open-source suite of SDKs, daemons and tools which use
