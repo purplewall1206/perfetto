@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Gracker (Chris)
+// This file is part of SmartPerfetto. See LICENSE for details.
+
 // Copyright (C) 2024 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -173,6 +177,11 @@ export class MermaidRenderer {
         console.warn('[MermaidRenderer] Failed to decode mermaid diagram:', e);
         continue;
       }
+
+      // Sanitize HTML tags that break securityLevel:'strict' rendering.
+      // LLMs often generate <br/> for line breaks in node labels — replace with \n.
+      code = code.replace(/<br\s*\/?>/gi, '\n');
+
 
       const renderId = `ai-mermaid-${Math.random().toString(36).slice(2)}`;
       host.classList.add('mermaid');

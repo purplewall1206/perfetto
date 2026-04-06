@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Gracker (Chris)
+// This file is part of SmartPerfetto. See LICENSE for details.
+
 // Utilities for SmartPerfetto auto-pin heuristics.
 //
 // Keep this file dependency-free so it can be unit-tested easily.
@@ -43,4 +47,3 @@ export function getMaxPinsForPattern(pattern: string): number | undefined {
   if (/(^|\b)SurfaceTexture\b/i.test(pattern)) return 1;
   return undefined;
 }
-
