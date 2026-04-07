@@ -8,12 +8,16 @@
  *
  * @module dataContract.types
  * @version 2.0.0 - DataEnvelope refactoring
- * @generated 2026-04-05T14:48:57.033Z
+ * @generated 2026-04-06T23:33:47.128Z
  */
 
 // =============================================================================
 // Conclusion Contract Types
 // =============================================================================
+
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Gracker (Chris)
+// This file is part of SmartPerfetto. See LICENSE for details.
 
 export type ConclusionOutputMode = 'initial_report' | 'focused_answer' | 'need_input';
 export type ConclusionClusterOutputMode = 'required' | 'optional' | 'none';

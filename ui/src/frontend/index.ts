@@ -35,12 +35,6 @@ import {postMessageHandler} from './post_message_handler';
 import {Route, Router} from '../core/router';
 import {checkHttpRpcConnection} from './rpc_http_dialog';
 import {maybeOpenTraceFromRoute} from './trace_url_handler';
-import {
-  DEFAULT_TRACK_MIN_HEIGHT_PX,
-  MINIMUM_TRACK_MIN_HEIGHT_PX,
-  TRACK_MIN_HEIGHT_SETTING,
-} from './timeline_page/track_view';
-import {renderTimelinePage} from './timeline_page/timeline_page';
 import {HttpRpcEngine} from '../trace_processor/http_rpc_engine';
 import {showModal} from '../widgets/modal';
 import {IdleDetector} from './idle_detector';
@@ -378,7 +372,6 @@ function onCssLoaded(app: AppImpl) {
 
   const pages = app.pages;
   pages.registerPage({route: '/', render: () => m(HomePage)});
-  pages.registerPage({route: '/viewer', render: () => renderTimelinePage()});
   const router = new Router();
   router.onRouteChanged = routeChange;
 

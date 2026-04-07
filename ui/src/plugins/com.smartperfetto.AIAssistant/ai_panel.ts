@@ -4507,8 +4507,7 @@ Output MUST follow this exact markdown structure:
                 pinnedCount.skipped++;
                 continue;
               }
-              const track = this.trace.tracks.getTrack(uri);
-              const hasMainThreadChip = track?.chips?.includes('main thread') ?? false;
+              const hasMainThreadChip = trackNode.chips?.includes('main thread') ?? false;
               // Allow both SliceTrack (events) and ThreadStateTrack (CPU scheduling state)
               if (!hasMainThreadChip || !isMainThreadPinnableTrack(uri)) {
                 pinnedCount.skipped++;
@@ -4542,11 +4541,11 @@ Output MUST follow this exact markdown structure:
               const uri = trackNode.uri as string | undefined;
               if (!uri || !isMainThreadPinnableTrack(uri)) continue;
 
-              const track = this.trace.tracks.getTrack(uri);
-              const hasMainThreadChip = track?.chips?.includes('main thread') ?? false;
+              const hasMainThreadChip = trackNode.chips?.includes('main thread') ?? false;
               if (!hasMainThreadChip) continue;
 
               // Determine track kind for dedup key
+              const track = this.trace.tracks.getTrack(uri);
               const kinds = track?.tags?.kinds ?? [];
               const trackKind = kinds.includes('SliceTrack') ? 'slice' :
                                kinds.includes('ThreadStateTrack') ? 'state' : 'other';
