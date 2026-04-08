@@ -246,7 +246,11 @@ export class StoryController {
               const rawData = JSON.parse(dataStr);
               const eventType = currentEventType || rawData.type || '';
 
-              console.log('[StoryController] Scene SSE event:', eventType, 'terminal?', eventType === 'end' || eventType === 'error');
+              const isTerminal =
+                eventType === 'end' ||
+                eventType === 'error' ||
+                eventType === 'scene_story_report_ready';
+              console.log('[StoryController] Scene SSE event:', eventType, 'terminal?', isTerminal);
 
               this.handleSSEEvent(
                 eventType, rawData, unwrapEventData, applyScenePayload,
@@ -254,7 +258,7 @@ export class StoryController {
               );
 
               // Terminal events
-              if (eventType === 'end' || eventType === 'error') {
+              if (isTerminal) {
                 reader.releaseLock();
                 clearTimeout(timeoutId);
                 if (eventType === 'error') {
@@ -262,8 +266,9 @@ export class StoryController {
                   console.error('[StoryController] Scene SSE error event:', errData);
                   throw new Error(errData.error || rawData.error || 'Scene reconstruction failed');
                 }
-                // 'end' event - render final result
-                this.debugLog('Scene SSE: end event received');
+                // Terminal event ('end' or 'scene_story_report_ready') — render
+                // whatever scenes/narrative we've collected and tear down.
+                this.debugLog('Scene SSE: terminal event received:', eventType);
                 this.renderResult(progressMessageId, scenes, trackEvents, narrative, findings);
                 this.autoPinTracks(scenes);
                 // Update scene navigation bar with reconstruction results
@@ -414,6 +419,58 @@ export class StoryController {
         this.debugLog('Scene reconstruction completed:', data);
         applyScenePayload(data);
         break;
+
+      // ── Scene Story Pipeline events ────────────────────────────────────
+      // Until the dedicated Story Panel UI lands, these lifecycle events
+      // are routed into the existing chat-message progress flow so users
+      // still see something while the scene_story_* protocol stabilises.
+
+      case 'scene_story_detected': {
+        const sceneCount = Array.isArray(data.scenes) ? data.scenes.length : 0;
+        const queuedCount = Number(data.analysisIntervals ?? 0);
+        this.debugLog('Story scenes detected:', sceneCount, 'queued:', queuedCount);
+        this.ctx.updateMessage(progressMessageId, {
+          content: `🎬 **场景还原中...**\n\n已检测到 ${sceneCount} 个场景,排队深度分析 ${queuedCount} 个`,
+        });
+        m.redraw();
+        break;
+      }
+
+      case 'scene_story_queued':
+      case 'scene_story_started':
+      case 'scene_story_retrying':
+        this.debugLog('Story job lifecycle:', eventType, data);
+        break;
+
+      case 'scene_story_completed':
+      case 'scene_story_failed':
+      case 'scene_story_dropped':
+        this.debugLog('Story job terminal:', eventType, data);
+        break;
+
+      case 'scene_story_cancelled': {
+        const scope = data.scope === 'session' ? 'session' : 'job';
+        this.debugLog('Story cancelled:', scope, data);
+        if (scope === 'session') {
+          this.ctx.updateMessage(progressMessageId, {
+            content: '🎬 **场景还原已取消**\n\n部分结果可能尚未生成。',
+          });
+          m.redraw();
+        }
+        break;
+      }
+
+      case 'scene_story_report_ready': {
+        // Terminal event for the new pipeline. Surface the Stage 3 summary
+        // (when present) as the narrative so the existing renderResult
+        // pipeline displays it, then let the connectToSSE() outer loop
+        // notice the terminal type and render the final scene table.
+        this.debugLog('Story report ready:', data);
+        if (typeof data.summary === 'string' && data.summary.length > 0) {
+          applyScenePayload({ narrative: data.summary });
+        }
+        break;
+      }
 
       default:
         this.debugLog('Scene SSE unknown event:', eventType);
