@@ -53,6 +53,7 @@ import {
   AISession,
   createStreamingFlowState,
   createStreamingAnswerState,
+  createStoryPanelState,
   InterventionState,
   DEFAULT_SETTINGS,
   PENDING_BACKEND_TRACE_KEY,
@@ -77,13 +78,13 @@ import {
   handleSSEEvent as handleSSEEventExternal,
   SSEHandlerContext,
 } from './sse_event_handlers';
-import {createOverlayTrack, STEP_TO_OVERLAY} from './track_overlay';
+import {createOverlayTrack} from './track_overlay';
 import {
   subscribeClearChat,
   subscribeOpenSettings,
 } from './assistant_command_bus';
-// Scene reconstruction module available for future integration
-// import {SceneReconstructionHandler, SceneHandlerContext} from './scene_reconstruction';
+// Scene reconstruction logic lives in story_controller.ts; shared constants in scene_constants.ts.
+import {StoryController, StoryControllerContext} from './story_controller';
 
 const DEBUG_AI_PANEL = false;
 
@@ -159,6 +160,9 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     isReferenceActive: false,
     showTracePicker: false,
     comparisonTraceLoading: false,
+    // Story Panel (Chat ↔ Story view switch)
+    currentView: 'chat',
+    storyState: createStoryPanelState(),
   };
 
   private unsubscribeClearChat?: () => void;
@@ -904,9 +908,35 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
           ? this.renderTracePicker()
           : null,
 
-        // Main content area with optional sidebar
+        // View switch toolbar — Chat ↔ Story tabs
+        m('div.ai-view-tabs', {
+          style: 'display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--chat-border, #e5e7eb); background: var(--chat-bg-subtle, #fafafa);',
+        }, [
+          m('button.ai-view-tab', {
+            onclick: () => { this.state.currentView = 'chat'; m.redraw(); },
+            title: '聊天视图',
+            style: `padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
+                    background: ${this.state.currentView === 'chat' ? '#2563eb' : 'transparent'};
+                    color: ${this.state.currentView === 'chat' ? 'white' : 'var(--chat-text, #333)'};
+                    font-weight: ${this.state.currentView === 'chat' ? '600' : '400'};`,
+          }, '💬 Chat'),
+          m('button.ai-view-tab', {
+            onclick: () => { this.state.currentView = 'story'; m.redraw(); },
+            title: '场景还原视图',
+            style: `padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
+                    background: ${this.state.currentView === 'story' ? '#2563eb' : 'transparent'};
+                    color: ${this.state.currentView === 'story' ? 'white' : 'var(--chat-text, #333)'};
+                    font-weight: ${this.state.currentView === 'story' ? '600' : '400'};`,
+          }, '🎬 Story'),
+        ]),
+
+        // Story view body — visible when currentView === 'story'
+        this.state.currentView === 'story' ? this.renderStoryBody() : null,
+
+        // Main content area with optional sidebar (visible when currentView === 'chat')
         m('div.ai-content-wrapper', {
           class: isInRpcMode ? 'with-sidebar' : '',  // 总是显示侧边栏（RPC 模式下）
+          style: this.state.currentView === 'story' ? 'display: none;' : '',
         }, [
           // Left: Main content area
           m('div.ai-main-content', [
@@ -2257,6 +2287,9 @@ Click ⚙️ to change settings.`;
         await this.handleTeachingPipelineCommand();
         break;
       case '/scene':
+        // /scene keyword path also activates the Story tab.
+        this.state.currentView = 'story';
+        m.redraw();
         await this.handleSceneReconstructCommand();
         break;
       default:
@@ -3664,595 +3697,118 @@ Output MUST follow this exact markdown structure:
     m.redraw();
   }
 
+  // Scene reconstruction constants (SCENE_DISPLAY_NAMES / SCENE_PIN_MAPPING /
+  // SCENE_THRESHOLDS and rating helpers) live in ./scene_constants.ts.
+  // AIPanel consumes them only indirectly through story_controller.ts.
+
   // =============================================================================
-  // Scene Reconstruction Types and Mappings
+  // Scene Reconstruction (delegates to StoryController)
   // =============================================================================
+  // Controller logic lives in ./story_controller.ts; AIPanel keeps only the
+  // thin command-dispatch wrapper below.
 
-  /**
-   * Scene category type matching backend's SceneCategory
-   */
-  private static readonly SCENE_DISPLAY_NAMES: Record<string, string> = {
-    'cold_start': '冷启动',
-    'warm_start': '温启动',
-    'hot_start': '热启动',
-    'scroll_start': '滑动启动',
-    'scroll': '滑动浏览',
-    'inertial_scroll': '惯性滑动',
-    'navigation': '页面跳转',
-    'app_switch': '应用切换',
-    'screen_on': '屏幕点亮',
-    'screen_off': '屏幕熄灭',
-    'screen_sleep': '屏幕休眠',
-    'screen_unlock': '解锁屏幕',
-    'notification': '通知操作',
-    'split_screen': '分屏操作',
-    'tap': '点击',
-    'long_press': '长按',
-    'idle': '空闲',
-  };
+  private storyController: StoryController | null = null;
 
-  /**
-   * Scene-to-pin mapping for auto-pinning relevant tracks based on scene type
-   */
-  private static readonly SCENE_PIN_MAPPING: Record<string, Array<{
-    pattern: string;
-    matchBy: string;
-    priority: number;
-    reason: string;
-    expand?: boolean;
-    mainThreadOnly?: boolean;
-    smartPin?: boolean;
-  }>> = {
-    'scroll_start': [
-      { pattern: '^RenderThread$', matchBy: 'name', priority: 1, reason: '渲染线程', smartPin: true },
-      { pattern: '^main$', matchBy: 'name', priority: 2, reason: '主线程', smartPin: true, mainThreadOnly: true },
-    ],
-    'scroll': [
-      { pattern: '^RenderThread$', matchBy: 'name', priority: 1, reason: '渲染线程', smartPin: true },
-      { pattern: 'SurfaceFlinger', matchBy: 'name', priority: 2, reason: '合成器' },
-      { pattern: '^BufferTX', matchBy: 'name', priority: 3, reason: '缓冲区', smartPin: true },
-    ],
-    'inertial_scroll': [
-      { pattern: '^RenderThread$', matchBy: 'name', priority: 1, reason: '渲染线程', smartPin: true },
-      { pattern: 'SurfaceFlinger', matchBy: 'name', priority: 2, reason: '合成器' },
-      { pattern: '^BufferTX', matchBy: 'name', priority: 3, reason: '缓冲区', smartPin: true },
-    ],
-    'cold_start': [
-      { pattern: '^main$', matchBy: 'name', priority: 1, reason: '主线程', smartPin: true, mainThreadOnly: true },
-      { pattern: 'ActivityManager', matchBy: 'name', priority: 2, reason: '活动管理' },
-      { pattern: 'Zygote', matchBy: 'name', priority: 3, reason: '进程创建' },
-    ],
-    'warm_start': [
-      { pattern: '^main$', matchBy: 'name', priority: 1, reason: '主线程', smartPin: true, mainThreadOnly: true },
-      { pattern: 'ActivityManager', matchBy: 'name', priority: 2, reason: '活动管理' },
-    ],
-    'hot_start': [
-      { pattern: '^main$', matchBy: 'name', priority: 1, reason: '主线程', smartPin: true, mainThreadOnly: true },
-    ],
-    'tap': [
-      { pattern: '^main$', matchBy: 'name', priority: 1, reason: '主线程', smartPin: true, mainThreadOnly: true },
-      { pattern: '^RenderThread$', matchBy: 'name', priority: 2, reason: '渲染响应', smartPin: true },
-    ],
-    'navigation': [
-      { pattern: '^main$', matchBy: 'name', priority: 1, reason: '主线程', smartPin: true, mainThreadOnly: true },
-      { pattern: '^RenderThread$', matchBy: 'name', priority: 2, reason: '渲染线程', smartPin: true },
-    ],
-    'app_switch': [
-      { pattern: 'ActivityManager', matchBy: 'name', priority: 1, reason: '活动管理' },
-      { pattern: 'WindowManager', matchBy: 'name', priority: 2, reason: '窗口管理' },
-    ],
-  };
-
-  /**
-   * Performance rating thresholds for scenes
-   */
-  private static readonly SCENE_THRESHOLDS: Record<string, { good: number; acceptable: number }> = {
-    'cold_start': { good: 500, acceptable: 1000 },
-    'warm_start': { good: 300, acceptable: 600 },
-    'hot_start': { good: 100, acceptable: 200 },
-    'scroll_fps': { good: 55, acceptable: 45 },
-    'inertial_scroll': { good: 500, acceptable: 1000 },
-    'tap': { good: 100, acceptable: 200 },
-    'navigation': { good: 300, acceptable: 500 },
-  };
-
-  /**
-   * Get performance rating emoji based on scene type and duration
-   */
-  private getScenePerformanceRating(sceneType: string, durationMs: number, metadata?: Record<string, any>): string {
-    // For scroll, check FPS instead of duration
-    if ((sceneType === 'scroll' || sceneType === 'inertial_scroll') && metadata?.averageFps !== undefined) {
-      const fps = metadata.averageFps;
-      const thresholds = AIPanel.SCENE_THRESHOLDS['scroll_fps'];
-      if (fps >= thresholds.good) return '🟢';
-      if (fps >= thresholds.acceptable) return '🟡';
-      return '🔴';
+  private getOrCreateStoryController(): StoryController {
+    if (!this.storyController) {
+      const ctx: StoryControllerContext = {
+        getBackendTraceId: () => this.state.backendTraceId,
+        getBackendUrl: () => this.state.settings.backendUrl,
+        getTrace: () => this.trace,
+        addMessage: (msg) => this.addMessage(msg),
+        updateMessage: (id, updates) => this.updateMessage(id, updates),
+        generateId: () => this.generateId(),
+        setLoadingState: (loading) => this.setLoadingState(loading),
+        fetchBackend: (url, opts) => this.fetchBackend(url, opts),
+        pinTracksFromInstructions: (insts, procs) =>
+          this.pinTracksFromInstructions(insts, procs),
+        setDetectedScenes: (scenes) => {
+          this.state.detectedScenes = scenes;
+        },
+        debug: DEBUG_AI_PANEL,
+      };
+      this.storyController = new StoryController(ctx);
     }
-
-    // For other scenes, check duration
-    const thresholds = AIPanel.SCENE_THRESHOLDS[sceneType];
-    if (!thresholds) return '⚪'; // Unknown scene type
-
-    if (durationMs <= thresholds.good) return '🟢';
-    if (durationMs <= thresholds.acceptable) return '🟡';
-    return '🔴';
+    return this.storyController;
   }
-
-  private getSceneResponseStatusLabel(sceneType: string, durationMs: number, metadata?: Record<string, any>): string {
-    const rating = this.getScenePerformanceRating(sceneType, durationMs, metadata);
-    if (rating === '🟢') return '🟢 流畅';
-    if (rating === '🟡') return '🟡 轻微波动';
-    if (rating === '🔴') return '🔴 明显波动';
-    return '⚪ 未知';
-  }
-
-  // =============================================================================
-  // Scene Reconstruction Command Handler
-  // =============================================================================
 
   /**
-   * Handle /scene command
-   * Replays user operations and device responses from the trace.
+   * Handle /scene command — delegates to StoryController and mirrors the
+   * lifecycle into storyState so the Story view can show running/completed.
+   *
+   * StoryController.start() catches its own errors and pushes them to the
+   * chat message stream, so from this wrapper's perspective the call always
+   * resolves. A future iteration can thread a status callback through the
+   * controller context if we need richer progress reporting.
    */
   private async handleSceneReconstructCommand() {
-    if (!this.state.backendTraceId) {
-      this.addMessage({
-        id: this.generateId(),
-        role: 'assistant',
-        content: '⚠️ **无法执行场景还原**\n\n请先确保 Trace 已上传到后端。',
-        timestamp: Date.now(),
-      });
-      return;
-    }
-
-    this.setLoadingState(true);
-    m.redraw();
-
-    // Add initial progress message
-    const progressMessageId = this.generateId();
-    this.addMessage({
-      id: progressMessageId,
-      role: 'assistant',
-      content: '🎬 **场景还原中...**\n\n正在回放 Trace 中的用户操作与设备响应...',
-      timestamp: Date.now(),
-    });
-
-    if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene reconstruction request with traceId:', this.state.backendTraceId);
-
-    try {
-      // Start scene reconstruction
-      const response = await this.fetchBackend(buildAssistantApiV1Url(this.state.settings.backendUrl, '/scene-reconstruct'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          traceId: this.state.backendTraceId,
-          options: {
-            deepAnalysis: false,
-            generateTracks: true,
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        try {
-          const errorData = await response.json();
-          console.error('[AIPanel] Scene reconstruction error response:', errorData);
-          throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-        } catch (parseErr) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-      }
-
-      const data = await response.json();
-      if (!data.success || !data.analysisId) {
-        throw new Error(data.error || 'Failed to start scene reconstruction');
-      }
-
-      const analysisId = data.analysisId;
-      if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene reconstruction started with analysisId:', analysisId);
-
-      // Connect to SSE for real-time updates
-      await this.connectToSceneSSE(analysisId, progressMessageId);
-
-    } catch (error: any) {
-      console.error('[AIPanel] Scene reconstruction error:', error);
-      // Update the progress message with error
-      this.updateMessage(progressMessageId, {
-        content: `❌ **场景还原失败**\n\n${error.message || '未知错误'}`,
-      });
-    }
-
-    this.setLoadingState(false);
-    m.redraw();
-  }
-
-  /**
-   * Connect to SSE endpoint for scene reconstruction updates.
-   * Uses fetch + manual SSE parsing (consistent with listenToAgentSSE)
-   * to send the API key via headers instead of exposing it in the URL.
-   */
-  private async connectToSceneSSE(analysisId: string, progressMessageId: string): Promise<void> {
-    const sceneSseUrl = buildAssistantApiV1Url(
-      this.state.settings.backendUrl,
-      `/scene-reconstruct/${analysisId}/stream`,
-    );
-
-    let scenes: any[] = [];
-    let trackEvents: any[] = [];
-    let narrative = '';
-    let findings: any[] = [];
-
-    const unwrapEventData = (raw: any): any => {
-      if (!raw || typeof raw !== 'object') return {};
-      // Agent-driven backend wraps payload as: { type, data, timestamp }.
-      if (raw.data && typeof raw.data === 'object') return raw.data;
-      return raw;
+    this.state.storyState = {
+      status: 'running',
+      lastError: null,
     };
-
-    const applyScenePayload = (payload: any) => {
-      if (!payload || typeof payload !== 'object') return;
-      if (Array.isArray(payload.scenes)) scenes = payload.scenes;
-      if (Array.isArray(payload.trackEvents)) trackEvents = payload.trackEvents;
-      if (Array.isArray(payload.tracks) && trackEvents.length === 0) trackEvents = payload.tracks;
-      if (typeof payload.narrative === 'string' && payload.narrative) narrative = payload.narrative;
-      if (typeof payload.conclusion === 'string' && payload.conclusion && !narrative) narrative = payload.conclusion;
-      if (Array.isArray(payload.findings)) findings = payload.findings;
-    };
-
-    // Use AbortController for timeout (5 minutes)
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      console.warn('[AIPanel] Scene SSE timeout');
-      abortController.abort();
-    }, 5 * 60 * 1000);
-
+    m.redraw();
     try {
-      // fetchBackend sends API key via x-api-key header (no URL exposure)
-      const response = await this.fetchBackend(sceneSseUrl, {
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Scene SSE connection failed: ${response.statusText}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body for scene SSE');
-      }
-
-      if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene SSE connected');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let currentEventType = '';
-
-      while (true) {
-        if (abortController.signal.aborted) break;
-
-        const {done, value} = await reader.read();
-        if (done) {
-          if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene SSE stream ended normally');
-          reader.releaseLock();
-          break;
-        }
-
-        buffer += decoder.decode(value, {stream: true});
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line) continue;
-          if (line.startsWith(':')) continue; // Skip keep-alive comments
-
-          if (line.startsWith('event:')) {
-            currentEventType = line.replace('event:', '').trim();
-          } else if (line.startsWith('data:')) {
-            const dataStr = line.replace('data:', '').trim();
-            if (!dataStr) {
-              currentEventType = '';
-              continue;
-            }
-            try {
-              const rawData = JSON.parse(dataStr);
-              const eventType = currentEventType || rawData.type || '';
-
-              console.log('[AIPanel] Scene SSE event:', eventType, 'terminal?', eventType === 'end' || eventType === 'error');
-
-              this.handleSceneSSEEvent(
-                eventType, rawData, unwrapEventData, applyScenePayload,
-                progressMessageId, scenes, findings, trackEvents,
-              );
-
-              // Terminal events
-              if (eventType === 'end' || eventType === 'error') {
-                reader.releaseLock();
-                clearTimeout(timeoutId);
-                if (eventType === 'error') {
-                  const errData = unwrapEventData(rawData);
-                  console.error('[AIPanel] Scene SSE error event:', errData);
-                  throw new Error(errData.error || rawData.error || 'Scene reconstruction failed');
-                }
-                // 'end' event - render final result
-                if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene SSE: end event received');
-                this.renderSceneReconstructionResult(progressMessageId, scenes, trackEvents, narrative, findings);
-                this.autoPinTracksForScenes(scenes);
-                // Update scene navigation bar with reconstruction results
-                this.state.detectedScenes = scenes;
-                m.redraw();
-                return;
-              }
-            } catch (e) {
-              // Re-throw scene errors; only swallow JSON parse failures
-              if (e instanceof Error && e.message.includes('Scene reconstruction')) throw e;
-              console.warn('[AIPanel] Failed to parse scene SSE data:', e);
-            }
-            currentEventType = '';
-          }
-        }
-      }
-
-      // Stream ended without explicit 'end' event - render what we have
-      this.renderSceneReconstructionResult(progressMessageId, scenes, trackEvents, narrative, findings);
-      this.autoPinTracksForScenes(scenes);
-      // Update scene navigation bar with reconstruction results
-      this.state.detectedScenes = scenes;
-      m.redraw();
-    } catch (e: any) {
-      if (abortController.signal.aborted && !e.message?.includes('Scene reconstruction')) {
-        throw new Error('Scene reconstruction timeout');
-      }
-      throw e;
+      await this.getOrCreateStoryController().start();
     } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  /**
-   * Dispatch a single scene SSE event to the appropriate handler.
-   * Extracted to keep connectToSceneSSE readable.
-   */
-  private handleSceneSSEEvent(
-    eventType: string,
-    rawData: any,
-    unwrapEventData: (raw: any) => any,
-    applyScenePayload: (payload: any) => void,
-    progressMessageId: string,
-    scenes: any[],
-    findings: any[],
-    trackEvents: any[],
-  ): void {
-    const data = unwrapEventData(rawData);
-
-    switch (eventType) {
-      case 'connected':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene SSE: connected event received');
-        break;
-
-      case 'progress': {
-        const phase = data.phase || rawData.phase;
-        if (!phase) break;
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene progress:', phase, data);
-        this.updateMessage(progressMessageId, {
-          content: `🎬 **场景还原中...**\n\n${phase}...`,
-        });
-        m.redraw();
-        break;
-      }
-
-      case 'phase_start':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene phase start:', data);
-        this.updateMessage(progressMessageId, {
-          content: `🎬 **场景还原中...**\n\n${data.phase || '正在分析'}...`,
-        });
-        m.redraw();
-        break;
-
-      case 'scene_detected':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene detected:', data);
-        if (data.scene) {
-          scenes.push(data.scene);
-        }
-        this.updateMessage(progressMessageId, {
-          content: `🎬 **场景还原中...**\n\n已检测到 ${scenes.length} 个场景...`,
-        });
-        m.redraw();
-        break;
-
-      case 'finding':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene finding:', data);
-        if (data.finding) {
-          findings.push(data.finding);
-        }
-        break;
-
-      case 'track_events':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Track events:', data);
-        if (Array.isArray(data.events)) {
-          trackEvents.length = 0;
-          trackEvents.push(...data.events);
-        } else if (Array.isArray(data.trackEvents)) {
-          trackEvents.length = 0;
-          trackEvents.push(...data.trackEvents);
-        }
-        break;
-
-      case 'track_data':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Track data:', data);
-        if (Array.isArray(data.scenes)) {
-          scenes.length = 0;
-          scenes.push(...data.scenes);
-        }
-        if (Array.isArray(data.tracks)) {
-          trackEvents.length = 0;
-          trackEvents.push(...data.tracks);
-        }
-        if (Array.isArray(data.trackEvents)) {
-          trackEvents.length = 0;
-          trackEvents.push(...data.trackEvents);
-        }
-        break;
-
-      // DataEnvelope events — route to track overlay for state timeline lanes
-      case 'data': {
-        const envelopes = Array.isArray(rawData.envelope)
-          ? rawData.envelope
-          : (rawData.envelope ? [rawData.envelope] : []);
-        for (const envelope of envelopes) {
-          if (!envelope?.meta?.stepId || !envelope?.data?.columns || !envelope?.data?.rows) continue;
-          const overlayId = STEP_TO_OVERLAY.get(envelope.meta.stepId);
-          if (overlayId && this.trace) {
-            if (DEBUG_AI_PANEL) console.log('[AIPanel] Creating overlay track:', overlayId);
-            createOverlayTrack(this.trace, overlayId, envelope.data.columns, envelope.data.rows)
-              .catch((err: Error) => console.warn('[AIPanel] Overlay track creation failed:', err));
-          }
-        }
-        break;
-      }
-
-      case 'result':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene result:', data);
-        applyScenePayload(data);
-        break;
-
-      case 'analysis_completed':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Analysis completed:', data);
-        applyScenePayload(data);
-        break;
-
-      case 'scene_reconstruction_completed':
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene reconstruction completed:', data);
-        applyScenePayload(data);
-        break;
-
-      default:
-        if (DEBUG_AI_PANEL) console.log('[AIPanel] Scene SSE unknown event:', eventType);
-        break;
-    }
-  }
-
-  /**
-   * Render the scene reconstruction result
-   */
-  private renderSceneReconstructionResult(
-    messageId: string,
-    scenes: any[],
-    _trackEvents: any[],
-    narrative: string,
-    _findings: any[]
-  ) {
-    if (scenes.length === 0) {
-      this.updateMessage(messageId, {
-        content: '🎬 **场景还原完成**\n\n未检测到明显的用户操作场景。',
-      });
+      this.state.storyState.status = 'completed';
       m.redraw();
-      return;
     }
-
-    // Build scene cards content
-    let content = '## 🎬 场景还原结果\n\n';
-
-    // Scene summary
-    content += `共还原 **${scenes.length}** 个操作场景（仅回放，不含根因诊断）：\n\n`;
-
-    // Scene timeline as a table
-    content += '| 序号 | 类型 | 开始时间 | 时长 | 应用/活动 | 响应状态 |\n';
-    content += '|------|------|----------|------|-----------|-----------|\n';
-
-    scenes.forEach((scene, index) => {
-      const displayName = AIPanel.SCENE_DISPLAY_NAMES[scene.type] || scene.type;
-      const durationStr = scene.durationMs >= 1000
-        ? `${(scene.durationMs / 1000).toFixed(2)}s`
-        : `${scene.durationMs.toFixed(0)}ms`;
-      const responseStatus = this.getSceneResponseStatusLabel(scene.type, scene.durationMs, scene.metadata);
-      const appInfo = scene.appPackage
-        ? (scene.activityName ? `${scene.appPackage}/${scene.activityName}` : scene.appPackage)
-        : '-';
-
-      // Make start timestamp clickable for navigation
-      const startTsNs = scene.startTs;
-      content += `| ${index + 1} | ${displayName} | `;
-      content += `@ts[${startTsNs}|${this.formatSceneTimestamp(startTsNs)}] | `;
-      content += `${durationStr} | ${appInfo.length > 30 ? appInfo.substring(0, 30) + '...' : appInfo} | ${responseStatus} |\n`;
-    });
-
-    // Add narrative if available
-    if (narrative) {
-      content += `\n---\n\n### 📝 操作回放摘要\n\n${narrative}\n`;
-    }
-
-    // Add navigation tips
-    content += `\n---\n\n💡 **提示**: 点击时间戳可跳转到对应位置，相关泳道已自动 Pin 到顶部。`;
-
-    this.updateMessage(messageId, { content });
-    m.redraw();
   }
 
   /**
-   * Auto-pin tracks based on detected scene types
+   * Render the Story Panel body — currently a thin wrapper around the
+   * existing scene reconstruction flow. Results still render into the Chat
+   * message stream, so users switch back to Chat to read them.
    */
-  private async autoPinTracksForScenes(scenes: any[]) {
-    if (!this.trace || scenes.length === 0) return;
+  private renderStoryBody(): m.Children {
+    const hasTrace = !!this.state.backendTraceId;
+    const status = this.state.storyState.status;
+    const isRunning = status === 'running';
 
-    // Collect unique scene types
-    const sceneTypes = new Set(scenes.map(s => s.type));
+    return m('div.ai-story-body', {
+      style: 'padding: 24px; max-width: 720px; margin: 0 auto;',
+    }, [
+      m('h2', {style: 'margin: 0 0 8px 0;'}, '🎬 场景还原'),
+      m('p', {style: 'color: var(--chat-text-secondary, #888); margin: 0 0 16px 0;'},
+        '从 Trace 中自动检测用户操作场景并分析性能问题。'),
+      m('p', {style: 'color: var(--chat-text-secondary, #888); margin: 0 0 24px 0; font-size: 13px;'},
+        '本视图当前提供启动入口;结果会写入 Chat 消息流,请在完成后切换到 Chat 视图查看详情。'),
 
-    // Collect pin instructions for all detected scene types
-    const allInstructions: Array<{
-      pattern: string;
-      matchBy: string;
-      priority: number;
-      reason: string;
-      expand?: boolean;
-      mainThreadOnly?: boolean;
-      smartPin?: boolean;
-    }> = [];
+      !hasTrace
+        ? m('div.ai-story-warning', {style: 'padding: 16px; background: #fff3cd; border-radius: 8px; color: #856404;'},
+            '⚠ 请先把 Trace 上传到后端(打开文件后自动完成)')
+        : null,
 
-    sceneTypes.forEach(sceneType => {
-      const instructions = AIPanel.SCENE_PIN_MAPPING[sceneType];
-      if (instructions) {
-        instructions.forEach(inst => {
-          // Avoid duplicates
-          if (!allInstructions.some(i => i.pattern === inst.pattern)) {
-            allInstructions.push(inst);
-          }
-        });
-      }
-    });
+      hasTrace
+        ? m('button.ai-story-start-btn', {
+            onclick: () => this.handleSceneReconstructCommand(),
+            disabled: isRunning,
+            style: `padding: 12px 24px; font-size: 16px; cursor: ${isRunning ? 'wait' : 'pointer'};
+                    background: ${isRunning ? '#ccc' : '#2563eb'}; color: white;
+                    border: none; border-radius: 8px;`,
+          }, isRunning ? '⏳ 运行中...' : '▶ 开始场景还原')
+        : null,
 
-    if (allInstructions.length === 0) return;
+      status === 'running'
+        ? m('div.ai-story-status.running', {
+            style: 'margin-top: 16px; padding: 12px; background: #e0f2fe; border-radius: 8px; color: #0369a1;',
+          }, '🎬 场景还原进行中。切换到 Chat 视图可查看实时进度。')
+        : null,
 
-    // Get active processes from scenes
-    const activeProcesses = scenes
-      .filter(s => s.appPackage)
-      .map(s => ({ processName: s.appPackage, frameCount: 1 }));
+      status === 'completed'
+        ? m('div.ai-story-status.completed', {
+            style: 'margin-top: 16px; padding: 12px; background: #dcfce7; border-radius: 8px; color: #166534;',
+          }, '✅ 场景还原完成。切换到 Chat 视图查看完整结果。')
+        : null,
 
-    if (DEBUG_AI_PANEL) console.log('[AIPanel] Auto-pinning tracks for scenes:', sceneTypes, 'with', allInstructions.length, 'instructions');
-
-    // Use existing pinTracksFromInstructions method
-    await this.pinTracksFromInstructions(allInstructions, activeProcesses);
+      this.state.storyState.lastError
+        ? m('div.ai-story-status.error', {
+            style: 'margin-top: 16px; padding: 12px; background: #fee2e2; border-radius: 8px; color: #991b1b;',
+          }, `❌ ${this.state.storyState.lastError}`)
+        : null,
+    ]);
   }
 
-  /**
-   * Format scene timestamp for display (ns string to human readable)
-   * Handles BigInt string timestamps from scene reconstruction
-   */
-  private formatSceneTimestamp(tsNs: string): string {
-    try {
-      const ns = BigInt(tsNs);
-      const ms = Number(ns / BigInt(1000000));
-      const seconds = ms / 1000;
-      if (seconds < 60) {
-        return `${seconds.toFixed(3)}s`;
-      }
-      const minutes = Math.floor(seconds / 60);
-      const remainingSeconds = seconds % 60;
-      return `${minutes}m ${remainingSeconds.toFixed(3)}s`;
-    } catch {
-      return tsNs;
-    }
-  }
 
   /**
    * Update an existing message by ID

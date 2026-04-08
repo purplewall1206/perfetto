@@ -208,6 +208,22 @@ export interface SqlQueryResult {
 }
 
 /**
+ * Story Panel state — tracks the Scene Story pipeline lifecycle for the
+ * Chat ↔ Story view switch in AIPanel.
+ */
+export interface StoryPanelState {
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  lastError: string | null;
+}
+
+export function createStoryPanelState(): StoryPanelState {
+  return {
+    status: 'idle',
+    lastError: null,
+  };
+}
+
+/**
  * AI panel internal state.
  */
 export interface AIPanelState {
@@ -263,6 +279,9 @@ export interface AIPanelState {
   isReferenceActive: boolean;           // Whether Perfetto is currently showing the reference trace
   showTracePicker: boolean;             // Whether trace picker modal is visible
   comparisonTraceLoading: boolean;      // Loading state for reference trace processor
+  // Story Panel state — Chat ↔ Story view switch
+  currentView: 'chat' | 'story';
+  storyState: StoryPanelState;
 }
 
 /**
