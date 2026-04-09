@@ -3861,7 +3861,7 @@ Output MUST follow this exact markdown structure:
       setTimeout(() => this.handleStoryPreview(), 0);
     }
 
-    const containerStyle = 'padding: 24px; max-width: 720px; margin: 0 auto;';
+    const containerStyle = 'padding: 24px; max-width: 720px; margin: 0 auto; overflow-y: auto; height: 100%;';
     const cardStyle = 'margin-top: 16px; padding: 16px; border-radius: 8px;';
 
     return m('div.ai-story-body', {style: containerStyle}, [
