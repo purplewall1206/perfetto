@@ -337,8 +337,12 @@ export class StoryController {
                 return;
               }
             } catch (e) {
-              // Re-throw scene errors; only swallow JSON parse failures
-              if (e instanceof Error && e.message.includes('Scene reconstruction')) throw e;
+              // Re-throw everything except JSON parse failures (SyntaxError).
+              // The old check `e.message.includes('Scene reconstruction')`
+              // silently swallowed errors whose message didn't match that
+              // exact casing/wording (e.g. `scene_reconstruction skill
+              // failed: ...`), causing the reader to be used after release.
+              if (!(e instanceof SyntaxError)) throw e;
               console.warn('[StoryController] Failed to parse scene SSE data:', e);
             }
             currentEventType = '';
