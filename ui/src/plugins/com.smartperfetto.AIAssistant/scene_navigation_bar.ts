@@ -52,6 +52,8 @@ const SCENE_DISPLAY_NAMES: Record<string, string> = {
   'inertial_scroll': '惯性滑动',
   'navigation': '跳转',
   'app_switch': '切换',
+  'home_screen': '桌面',
+  'app_foreground': '应用内',
   'screen_on': '亮屏',
   'screen_off': '熄屏',
   'screen_sleep': '休眠',
@@ -61,6 +63,13 @@ const SCENE_DISPLAY_NAMES: Record<string, string> = {
   'tap': '点击',
   'long_press': '长按',
   'idle': '空闲',
+  'back_key': '返回',
+  'home_key': 'Home',
+  'recents_key': '最近',
+  'anr': 'ANR',
+  'ime_show': '弹出键盘',
+  'ime_hide': '收起键盘',
+  'window_transition': '转场',
 };
 
 // Scene type icons
@@ -73,6 +82,8 @@ const SCENE_ICONS: Record<string, string> = {
   'inertial_scroll': '🌀',
   'navigation': '🔀',
   'app_switch': '🔁',
+  'home_screen': '🏠',
+  'app_foreground': '📲',
   'screen_on': '💡',
   'screen_off': '🌙',
   'screen_sleep': '😴',
@@ -82,6 +93,13 @@ const SCENE_ICONS: Record<string, string> = {
   'tap': '👆',
   'long_press': '✋',
   'idle': '💤',
+  'back_key': '⬅️',
+  'home_key': '🏠',
+  'recents_key': '📋',
+  'anr': '🚨',
+  'ime_show': '⌨️',
+  'ime_hide': '⌨️',
+  'window_transition': '🔄',
 };
 
 // Performance thresholds

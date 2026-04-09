@@ -20,6 +20,8 @@ export const SCENE_DISPLAY_NAMES: Record<string, string> = {
   'inertial_scroll': '惯性滑动',
   'navigation': '页面跳转',
   'app_switch': '应用切换',
+  'home_screen': '桌面',
+  'app_foreground': '应用内',
   'screen_on': '屏幕点亮',
   'screen_off': '屏幕熄灭',
   'screen_sleep': '屏幕休眠',
@@ -29,6 +31,13 @@ export const SCENE_DISPLAY_NAMES: Record<string, string> = {
   'tap': '点击',
   'long_press': '长按',
   'idle': '空闲',
+  'back_key': '返回键',
+  'home_key': 'Home键',
+  'recents_key': '最近任务键',
+  'anr': 'ANR',
+  'ime_show': '键盘弹出',
+  'ime_hide': '键盘收起',
+  'window_transition': '窗口转场',
 };
 
 /**
@@ -86,6 +95,18 @@ export const SCENE_PIN_MAPPING: Record<string, ScenePinInstruction[]> = {
     { pattern: 'ActivityManager', matchBy: 'name', priority: 1, reason: '活动管理' },
     { pattern: 'WindowManager', matchBy: 'name', priority: 2, reason: '窗口管理' },
   ],
+  'back_key': [
+    { pattern: 'com.android.systemui', matchBy: 'name', priority: 1, reason: '系统UI' },
+    { pattern: '^main$', matchBy: 'name', priority: 2, reason: '主线程', smartPin: true, mainThreadOnly: true },
+  ],
+  'home_key': [
+    { pattern: 'com.android.systemui', matchBy: 'name', priority: 1, reason: '系统UI' },
+    { pattern: 'ActivityManager', matchBy: 'name', priority: 2, reason: '活动管理' },
+  ],
+  'anr': [
+    { pattern: '^main$', matchBy: 'name', priority: 1, reason: '主线程', smartPin: true, mainThreadOnly: true },
+    { pattern: 'system_server', matchBy: 'name', priority: 2, reason: '系统服务' },
+  ],
 };
 
 /**
@@ -99,6 +120,8 @@ export const SCENE_THRESHOLDS: Record<string, { good: number; acceptable: number
   'inertial_scroll': { good: 500, acceptable: 1000 },
   'tap': { good: 100, acceptable: 200 },
   'navigation': { good: 300, acceptable: 500 },
+  'anr': { good: 99999, acceptable: 99999 },  // ANR is always severe
+  'window_transition': { good: 300, acceptable: 500 },
 };
 
 /**

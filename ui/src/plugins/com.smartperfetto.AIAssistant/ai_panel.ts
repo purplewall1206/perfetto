@@ -2132,9 +2132,13 @@ Click ⚙️ to change settings.`;
     const typeNames: Record<string, string> = {
       cold_start: '冷启动', warm_start: '温启动', hot_start: '热启动',
       scroll: '滑动', inertial_scroll: '惯性滑动', scroll_start: '滑动',
-      app_switch: '应用切换', navigation: '页面跳转',
+      app_switch: '应用切换', home_screen: '桌面', app_foreground: '应用内',
+      navigation: '页面跳转',
       tap: '点击响应', long_press: '长按响应',
       screen_on: '亮屏', screen_unlock: '解锁',
+      back_key: '返回键', home_key: 'Home键', recents_key: '最近任务键',
+      anr: 'ANR', ime_show: '键盘弹出', ime_hide: '键盘收起',
+      window_transition: '窗口转场',
     };
     const typeName = typeNames[scene.type] || scene.type;
     const appHint = scene.appPackage ? ` (${scene.appPackage})` : '';
