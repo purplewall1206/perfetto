@@ -319,7 +319,12 @@ export class StoryController {
                 if (eventType === 'error') {
                   const errData = unwrapEventData(rawData);
                   console.error('[StoryController] Scene SSE error event:', errData);
-                  throw new Error(errData.error || rawData.error || 'Scene reconstruction failed');
+                  // Backend sends {content: {message: "..."}} but legacy paths
+                  // use {error: "..."}. Check all variants.
+                  const errMsg = errData.message || errData.error
+                    || rawData.content?.message || rawData.error
+                    || 'Scene reconstruction failed';
+                  throw new Error(errMsg);
                 }
                 // Terminal event ('end' or 'scene_story_report_ready') — render
                 // whatever scenes/narrative we've collected and tear down.
