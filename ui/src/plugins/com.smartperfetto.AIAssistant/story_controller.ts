@@ -132,7 +132,7 @@ export class StoryController {
    * Start scene reconstruction.
    * Equivalent to the old AIPanel.handleSceneReconstructCommand().
    */
-  async start(): Promise<void> {
+  async start(opts?: {forceRefresh?: boolean}): Promise<void> {
     const backendTraceId = this.ctx.getBackendTraceId();
     if (!backendTraceId) {
       this.ctx.addMessage({
@@ -170,6 +170,7 @@ export class StoryController {
             options: {
               deepAnalysis: false,
               generateTracks: true,
+              forceRefresh: opts?.forceRefresh ?? false,
             },
           }),
         },

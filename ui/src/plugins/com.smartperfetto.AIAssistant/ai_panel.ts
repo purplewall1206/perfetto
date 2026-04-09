@@ -3797,15 +3797,16 @@ Output MUST follow this exact markdown structure:
 
   /**
    * User confirmed the cold-path estimate — start the full pipeline.
+   * Pass forceRefresh=true to bypass the backend cache (used by "重新分析").
    */
-  private async handleStoryConfirm() {
+  private async handleStoryConfirm(opts?: {forceRefresh?: boolean}) {
     this.state.storyState.status = 'running';
     this.state.storyState.lastError = null;
     m.redraw();
 
     try {
       const ctrl = this.getOrCreateStoryController();
-      await ctrl.start();
+      await ctrl.start({forceRefresh: opts?.forceRefresh});
       this.state.storyState.status = 'completed';
     } catch (err: any) {
       this.state.storyState.status = 'failed';
@@ -4031,8 +4032,12 @@ Output MUST follow this exact markdown structure:
 
       m('button', {
         onclick: () => {
-          this.state.storyState = createStoryPanelState();
-          m.redraw();
+          // Clear stale cached data, then start fresh analysis directly.
+          // Do NOT reset to idle — that re-triggers handleStoryPreview()
+          // which hits the cache again and shows the same old result.
+          this.state.storyState.cachedReport = null;
+          this.state.storyState.preview = null;
+          this.handleStoryConfirm({forceRefresh: true});
         },
         style: 'margin-top: 12px; padding: 8px 16px; font-size: 13px; cursor: pointer; ' +
                'background: transparent; color: #2563eb; border: 1px solid #bfdbfe; border-radius: 6px;',
