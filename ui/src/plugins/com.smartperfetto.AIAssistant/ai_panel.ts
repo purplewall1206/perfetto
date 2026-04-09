@@ -78,7 +78,7 @@ import {
   handleSSEEvent as handleSSEEventExternal,
   SSEHandlerContext,
 } from './sse_event_handlers';
-import {createOverlayTrack} from './track_overlay';
+import {STEP_TO_OVERLAY, createOverlayTrack} from './track_overlay';
 import {
   subscribeClearChat,
   subscribeOpenSettings,
@@ -3762,6 +3762,22 @@ Output MUST follow this exact markdown structure:
           const report = await ctrl.loadReport(preview.cached.reportId);
           this.state.storyState.cachedReport = report;
           this.state.storyState.status = 'completed';
+
+          // Rebuild track overlays from the cached envelopes so the
+          // timeline looks the same as a fresh run.
+          this.replayOverlaysFromReport(report);
+
+          // Sync detected scenes for the navigation bar.
+          if (Array.isArray(report.displayedScenes)) {
+            this.state.detectedScenes = report.displayedScenes.map((s: any) => ({
+              type: s.sceneType,
+              startTs: s.startTs,
+              endTs: s.endTs,
+              durationMs: s.durationMs,
+              appPackage: s.processName,
+              metadata: s.metadata,
+            }));
+          }
         } catch (loadErr: any) {
           // Cached report failed to load (expired between preview and load?).
           // Degrade to cold path so the user can still run fresh.
@@ -3952,13 +3968,15 @@ Output MUST follow this exact markdown structure:
   private renderStoryCompleted(): m.Children {
     const report = this.state.storyState.cachedReport;
     const cardStyle = 'margin-top: 16px; padding: 16px; border-radius: 8px;';
+    const scenes: any[] = report?.displayedScenes ?? [];
 
     return m('div', [
+      // Summary card
       m('div', {style: `${cardStyle} background: #dcfce7; color: #166534;`}, [
         report
           ? m('div', [
               m('div', {style: 'font-weight: 600; margin-bottom: 4px;'},
-                `✅ 场景还原完成 — ${report.displayedScenes?.length ?? 0} 个场景`),
+                `✅ 场景还原完成 — ${scenes.length} 个场景`),
               report.summary
                 ? m('div', {style: 'margin-top: 8px; font-size: 14px; line-height: 1.6;'},
                     report.summary)
@@ -3971,6 +3989,45 @@ Output MUST follow this exact markdown structure:
           : '✅ 场景还原完成。切换到 Chat 视图查看完整结果。',
       ]),
 
+      // Scene table (inline, mirrors the Chat renderResult table)
+      scenes.length > 0
+        ? m('div', {style: `${cardStyle} background: var(--chat-bg-secondary, #1e293b); overflow-x: auto;`}, [
+            m('table', {style: 'width: 100%; border-collapse: collapse; font-size: 13px;'}, [
+              m('thead', m('tr', {style: 'border-bottom: 1px solid #334155;'},
+                ['#', '类型', '时长', '应用/进程', '状态'].map(h =>
+                  m('th', {style: 'padding: 8px 12px; text-align: left; color: #94a3b8; font-weight: 500;'}, h),
+                ),
+              )),
+              m('tbody', scenes.map((scene: any, i: number) => {
+                const displayName = SCENE_DISPLAY_NAMES[scene.sceneType] ?? scene.sceneType;
+                const dur = scene.durationMs >= 1000
+                  ? `${(scene.durationMs / 1000).toFixed(2)}s`
+                  : `${Math.round(scene.durationMs)}ms`;
+                const severity = scene.severity === 'bad' ? '🔴'
+                  : scene.severity === 'warning' ? '🟡'
+                  : scene.severity === 'good' ? '🟢' : '⚪';
+                return m('tr', {
+                  key: scene.id,
+                  style: 'border-bottom: 1px solid #1e293b; cursor: pointer;',
+                  title: `点击跳转到 ${scene.startTs}`,
+                }, [
+                  m('td', {style: 'padding: 6px 12px; color: #64748b;'}, `${i + 1}`),
+                  m('td', {style: 'padding: 6px 12px; color: #e2e8f0;'}, `${severity} ${displayName}`),
+                  m('td', {style: 'padding: 6px 12px; color: #e2e8f0; font-variant-numeric: tabular-nums;'}, dur),
+                  m('td', {style: 'padding: 6px 12px; color: #94a3b8; max-width: 200px; overflow: hidden; text-overflow: ellipsis;'},
+                    scene.processName ?? '-'),
+                  m('td', {style: 'padding: 6px 12px;'},
+                    m('span', {style: `font-size: 11px; padding: 2px 6px; border-radius: 4px; ${
+                      scene.analysisState === 'completed' ? 'background: #166534; color: #dcfce7;'
+                      : scene.analysisState === 'failed' ? 'background: #991b1b; color: #fee2e2;'
+                      : 'background: #334155; color: #94a3b8;'
+                    }`}, scene.analysisState ?? 'not_planned')),
+                ]);
+              })),
+            ]),
+          ])
+        : null,
+
       m('button', {
         onclick: () => {
           this.state.storyState = createStoryPanelState();
@@ -3980,6 +4037,25 @@ Output MUST follow this exact markdown structure:
                'background: transparent; color: #2563eb; border: 1px solid #bfdbfe; border-radius: 6px;',
       }, '重新分析'),
     ]);
+  }
+
+  /**
+   * Replay track overlays from a cached SceneReport's envelopes.
+   * Called on cache-hit so the timeline looks the same as a fresh run.
+   */
+  private replayOverlaysFromReport(report: any): void {
+    if (!Array.isArray(report?.cachedDataEnvelopes)) return;
+    const trace = this.trace;
+    if (!trace) return;
+
+    for (const envelope of report.cachedDataEnvelopes) {
+      if (!envelope?.meta?.stepId || !envelope?.data?.columns || !envelope?.data?.rows) continue;
+      const overlayId = STEP_TO_OVERLAY.get(envelope.meta.stepId);
+      if (overlayId) {
+        createOverlayTrack(trace, overlayId, envelope.data.columns, envelope.data.rows)
+          .catch((err: Error) => console.warn('[AIPanel] Cached overlay creation failed:', err));
+      }
+    }
   }
 
 
