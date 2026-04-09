@@ -84,6 +84,7 @@ import {
   subscribeOpenSettings,
 } from './assistant_command_bus';
 // Scene reconstruction logic lives in story_controller.ts; shared constants in scene_constants.ts.
+import {SCENE_DISPLAY_NAMES} from './scene_constants';
 import {StoryController, StoryControllerContext} from './story_controller';
 
 const DEBUG_AI_PANEL = false;
