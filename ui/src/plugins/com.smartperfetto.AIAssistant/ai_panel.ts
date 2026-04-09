@@ -3733,6 +3733,88 @@ Output MUST follow this exact markdown structure:
   }
 
   /**
+   * Trigger a preview check for scene reconstruction. Called when the Story
+   * tab opens with a loaded trace, or when the user explicitly asks for
+   * /scene. Hits POST /scene-reconstruct/preview which returns in sub-second
+   * for small traces (or ~5-10s for GB-scale files while hashing).
+   */
+  private async handleStoryPreview() {
+    const traceId = this.state.backendTraceId;
+    if (!traceId) return;
+    if (this.state.storyState.status === 'previewing') return; // dedupe
+
+    this.state.storyState.status = 'previewing';
+    this.state.storyState.lastError = null;
+    this.state.storyState.preview = null;
+    this.state.storyState.cachedReport = null;
+    m.redraw();
+
+    try {
+      const ctrl = this.getOrCreateStoryController();
+      const preview = await ctrl.preview(traceId);
+      this.state.storyState.preview = preview;
+
+      if (preview.cached) {
+        // Cache hit — auto-load the full report for instant display.
+        this.state.storyState.status = 'preview_cached';
+        m.redraw();
+        try {
+          const report = await ctrl.loadReport(preview.cached.reportId);
+          this.state.storyState.cachedReport = report;
+          this.state.storyState.status = 'completed';
+        } catch (loadErr: any) {
+          // Cached report failed to load (expired between preview and load?).
+          // Degrade to cold path so the user can still run fresh.
+          console.warn('[AIPanel] Cached report load failed, falling back to cold path:', loadErr);
+          this.state.storyState.status = 'preview_cold';
+        }
+      } else {
+        this.state.storyState.status = 'preview_cold';
+      }
+    } catch (err: any) {
+      this.state.storyState.status = 'failed';
+      this.state.storyState.lastError = err?.message ?? 'Preview failed';
+    }
+    m.redraw();
+  }
+
+  /**
+   * User confirmed the cold-path estimate — start the full pipeline.
+   */
+  private async handleStoryConfirm() {
+    this.state.storyState.status = 'running';
+    this.state.storyState.lastError = null;
+    m.redraw();
+
+    try {
+      const ctrl = this.getOrCreateStoryController();
+      await ctrl.start();
+      this.state.storyState.status = 'completed';
+    } catch (err: any) {
+      this.state.storyState.status = 'failed';
+      this.state.storyState.lastError = err?.message ?? 'Scene reconstruction failed';
+    }
+    m.redraw();
+  }
+
+  /**
+   * Cancel an in-flight pipeline run.
+   */
+  private async handleStoryCancel() {
+    const analysisId = this.state.storyState.analysisId;
+    if (!analysisId) return;
+    try {
+      await this.fetchBackend(
+        buildAssistantApiV1Url(this.state.settings.backendUrl,
+          `/scene-reconstruct/${analysisId}/cancel`),
+        {method: 'POST'},
+      );
+    } catch (e) {
+      console.warn('[AIPanel] Cancel request failed:', e);
+    }
+  }
+
+  /**
    * Handle /scene command — delegates to StoryController and mirrors the
    * lifecycle into storyState so the Story view can show running/completed.
    *
@@ -3742,70 +3824,161 @@ Output MUST follow this exact markdown structure:
    * controller context if we need richer progress reporting.
    */
   private async handleSceneReconstructCommand() {
-    this.state.storyState = {
-      status: 'running',
-      lastError: null,
-    };
-    m.redraw();
-    try {
-      await this.getOrCreateStoryController().start();
-    } finally {
-      this.state.storyState.status = 'completed';
-      m.redraw();
-    }
+    // Switch to Story view and trigger preview (the new PR3 flow).
+    // Results will render inline in the Story panel. The Chat also gets
+    // a compact notification via StoryController.start() → ctx.addMessage.
+    this.state.currentView = 'story';
+    void this.handleStoryPreview();
   }
 
   /**
-   * Render the Story Panel body — currently a thin wrapper around the
-   * existing scene reconstruction flow. Results still render into the Chat
-   * message stream, so users switch back to Chat to read them.
+   * Render the Story Panel body — a state-machine-driven view that walks
+   * the user through preview → confirm → pipeline → results, all inline.
    */
   private renderStoryBody(): m.Children {
     const hasTrace = !!this.state.backendTraceId;
-    const status = this.state.storyState.status;
-    const isRunning = status === 'running';
+    const s = this.state.storyState;
 
-    return m('div.ai-story-body', {
-      style: 'padding: 24px; max-width: 720px; margin: 0 auto;',
-    }, [
+    // Auto-trigger preview when the Story tab opens with a loaded trace.
+    if (hasTrace && s.status === 'idle') {
+      setTimeout(() => this.handleStoryPreview(), 0);
+    }
+
+    const containerStyle = 'padding: 24px; max-width: 720px; margin: 0 auto;';
+    const cardStyle = 'margin-top: 16px; padding: 16px; border-radius: 8px;';
+
+    return m('div.ai-story-body', {style: containerStyle}, [
       m('h2', {style: 'margin: 0 0 8px 0;'}, '🎬 场景还原'),
       m('p', {style: 'color: var(--chat-text-secondary, #888); margin: 0 0 16px 0;'},
         '从 Trace 中自动检测用户操作场景并分析性能问题。'),
-      m('p', {style: 'color: var(--chat-text-secondary, #888); margin: 0 0 24px 0; font-size: 13px;'},
-        '本视图当前提供启动入口;结果会写入 Chat 消息流,请在完成后切换到 Chat 视图查看详情。'),
 
+      // No trace uploaded
       !hasTrace
-        ? m('div.ai-story-warning', {style: 'padding: 16px; background: #fff3cd; border-radius: 8px; color: #856404;'},
+        ? m('div', {style: `${cardStyle} background: #fff3cd; color: #856404;`},
             '⚠ 请先把 Trace 上传到后端(打开文件后自动完成)')
         : null,
 
-      hasTrace
-        ? m('button.ai-story-start-btn', {
-            onclick: () => this.handleSceneReconstructCommand(),
-            disabled: isRunning,
-            style: `padding: 12px 24px; font-size: 16px; cursor: ${isRunning ? 'wait' : 'pointer'};
-                    background: ${isRunning ? '#ccc' : '#2563eb'}; color: white;
-                    border: none; border-radius: 8px;`,
-          }, isRunning ? '⏳ 运行中...' : '▶ 开始场景还原')
+      // ── Previewing ────────────────────────────────────────────────────
+      s.status === 'previewing'
+        ? m('div', {style: `${cardStyle} background: #e0f2fe; color: #0369a1;`},
+            '⏳ 正在检查缓存与估算成本...')
         : null,
 
-      status === 'running'
-        ? m('div.ai-story-status.running', {
-            style: 'margin-top: 16px; padding: 12px; background: #e0f2fe; border-radius: 8px; color: #0369a1;',
-          }, '🎬 场景还原进行中。切换到 Chat 视图可查看实时进度。')
+      // ── Preview: cache hit (loading full report) ──────────────────────
+      s.status === 'preview_cached'
+        ? m('div', {style: `${cardStyle} background: #dcfce7; color: #166534;`},
+            '✅ 发现历史缓存报告,正在加载...')
         : null,
 
-      status === 'completed'
-        ? m('div.ai-story-status.completed', {
-            style: 'margin-top: 16px; padding: 12px; background: #dcfce7; border-radius: 8px; color: #166534;',
-          }, '✅ 场景还原完成。切换到 Chat 视图查看完整结果。')
+      // ── Preview: cold path — show estimate + confirm button ───────────
+      s.status === 'preview_cold' && s.preview
+        ? m('div', {style: `${cardStyle} background: #f0f9ff; border: 1px solid #bae6fd;`}, [
+            m('div', {style: 'font-weight: 600; margin-bottom: 12px; color: #0c4a6e;'},
+              '预估分析成本'),
+            m('div', {style: 'display: flex; gap: 24px; margin-bottom: 16px;'}, [
+              this.renderEstimateMetric(
+                `${s.preview.estimate.expectedScenes}`, '预估场景数'),
+              this.renderEstimateMetric(
+                `~${s.preview.estimate.etaSec}s`, '预估耗时'),
+              this.renderEstimateMetric(
+                `$${s.preview.estimate.estimatedUsd}`, '预估费用'),
+            ]),
+            s.preview.estimate.confidence === 'low'
+              ? m('div', {style: 'font-size: 12px; color: #94a3b8; margin-bottom: 12px;'},
+                  '* 预估基于启发式公式,实际可能有所偏差')
+              : null,
+            m('div', {style: 'display: flex; gap: 8px;'}, [
+              m('button', {
+                onclick: () => this.handleStoryConfirm(),
+                style: 'padding: 10px 24px; font-size: 15px; cursor: pointer; ' +
+                       'background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: 600;',
+              }, '▶ 开始分析'),
+              m('button', {
+                onclick: () => {
+                  this.state.storyState = createStoryPanelState();
+                  m.redraw();
+                },
+                style: 'padding: 10px 16px; font-size: 15px; cursor: pointer; ' +
+                       'background: transparent; color: #64748b; border: 1px solid #e2e8f0; border-radius: 8px;',
+              }, '取消'),
+            ]),
+          ])
         : null,
 
-      this.state.storyState.lastError
-        ? m('div.ai-story-status.error', {
-            style: 'margin-top: 16px; padding: 12px; background: #fee2e2; border-radius: 8px; color: #991b1b;',
-          }, `❌ ${this.state.storyState.lastError}`)
+      // ── Running ───────────────────────────────────────────────────────
+      s.status === 'running'
+        ? m('div', {style: `${cardStyle} background: #e0f2fe; color: #0369a1;`}, [
+            m('div', {style: 'margin-bottom: 8px;'}, '🎬 场景还原进行中...'),
+            m('div', {style: 'font-size: 13px; color: #64748b;'},
+              '进度消息同步显示在 Chat 视图中。'),
+            m('button', {
+              onclick: () => this.handleStoryCancel(),
+              style: 'margin-top: 12px; padding: 8px 16px; font-size: 13px; cursor: pointer; ' +
+                     'background: transparent; color: #dc2626; border: 1px solid #fca5a5; border-radius: 6px;',
+            }, '取消分析'),
+          ])
         : null,
+
+      // ── Completed ─────────────────────────────────────────────────────
+      s.status === 'completed'
+        ? this.renderStoryCompleted()
+        : null,
+
+      // ── Failed ────────────────────────────────────────────────────────
+      s.status === 'failed'
+        ? m('div', {style: `${cardStyle} background: #fee2e2; color: #991b1b;`}, [
+            m('div', `❌ ${s.lastError || '场景还原失败'}`),
+            m('button', {
+              onclick: () => this.handleStoryPreview(),
+              style: 'margin-top: 12px; padding: 8px 16px; font-size: 13px; cursor: pointer; ' +
+                     'background: #2563eb; color: white; border: none; border-radius: 6px;',
+            }, '重试'),
+          ])
+        : null,
+    ]);
+  }
+
+  private renderEstimateMetric(value: string, label: string): m.Children {
+    return m('div', [
+      m('div', {style: 'font-size: 24px; font-weight: 700; color: #0369a1;'}, value),
+      m('div', {style: 'font-size: 12px; color: #64748b;'}, label),
+    ]);
+  }
+
+  /**
+   * Render the completed state — either a cached report inline or a
+   * "done, check Chat" banner.
+   */
+  private renderStoryCompleted(): m.Children {
+    const report = this.state.storyState.cachedReport;
+    const cardStyle = 'margin-top: 16px; padding: 16px; border-radius: 8px;';
+
+    return m('div', [
+      m('div', {style: `${cardStyle} background: #dcfce7; color: #166534;`}, [
+        report
+          ? m('div', [
+              m('div', {style: 'font-weight: 600; margin-bottom: 4px;'},
+                `✅ 场景还原完成 — ${report.displayedScenes?.length ?? 0} 个场景`),
+              report.summary
+                ? m('div', {style: 'margin-top: 8px; font-size: 14px; line-height: 1.6;'},
+                    report.summary)
+                : null,
+              report.cachePolicy === 'disk_7d'
+                ? m('div', {style: 'margin-top: 8px; font-size: 12px; color: #64748b;'},
+                    `来自缓存 (${new Date(report.createdAt).toLocaleString()})`)
+                : null,
+            ])
+          : '✅ 场景还原完成。切换到 Chat 视图查看完整结果。',
+      ]),
+
+      m('button', {
+        onclick: () => {
+          this.state.storyState = createStoryPanelState();
+          m.redraw();
+        },
+        style: 'margin-top: 12px; padding: 8px 16px; font-size: 13px; cursor: pointer; ' +
+               'background: transparent; color: #2563eb; border: 1px solid #bfdbfe; border-radius: 6px;',
+      }, '重新分析'),
     ]);
   }
 

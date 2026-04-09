@@ -22,7 +22,7 @@ import {
   getSceneResponseStatusLabel,
 } from './scene_constants';
 import {STEP_TO_OVERLAY, createOverlayTrack} from './track_overlay';
-import {Message} from './types';
+import {Message, StoryPreviewResult} from './types';
 
 /**
  * StoryController context — injected by AIPanel.
@@ -75,6 +75,57 @@ export class StoryController {
 
   private debugLog(...args: any[]): void {
     if (this.ctx.debug) console.log('[StoryController]', ...args);
+  }
+
+  /**
+   * Cheap preview: POST /scene-reconstruct/preview → estimate + cache status.
+   * Used by the Story Panel to show "cache hit" or "confirm before running"
+   * before committing to the heavy pipeline.
+   */
+  async preview(traceId: string): Promise<StoryPreviewResult> {
+    const url = buildAssistantApiV1Url(
+      this.ctx.getBackendUrl(),
+      '/scene-reconstruct/preview',
+    );
+    const response = await this.ctx.fetchBackend(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({traceId}),
+    });
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(
+        (errData as any).error || `Preview failed: HTTP ${response.status}`,
+      );
+    }
+    const data = await response.json();
+    if (!(data as any).success) {
+      throw new Error((data as any).error || 'Preview request failed');
+    }
+    return data as StoryPreviewResult;
+  }
+
+  /**
+   * Load a previously persisted SceneReport by reportId.
+   * GET /scene-reconstruct/report/:reportId
+   */
+  async loadReport(reportId: string): Promise<any> {
+    const url = buildAssistantApiV1Url(
+      this.ctx.getBackendUrl(),
+      `/scene-reconstruct/report/${encodeURIComponent(reportId)}`,
+    );
+    const response = await this.ctx.fetchBackend(url);
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(
+        (errData as any).error || `Load report failed: HTTP ${response.status}`,
+      );
+    }
+    const data = await response.json();
+    if (!(data as any).success) {
+      throw new Error((data as any).error || 'Failed to load report');
+    }
+    return (data as any).report;
   }
 
   /**
@@ -149,6 +200,10 @@ export class StoryController {
       this.ctx.updateMessage(progressMessageId, {
         content: `❌ **场景还原失败**\n\n${error.message || '未知错误'}`,
       });
+      this.ctx.setLoadingState(false);
+      m.redraw();
+      // Re-throw so the Story Panel state machine can transition to 'failed'.
+      throw error;
     }
 
     this.ctx.setLoadingState(false);

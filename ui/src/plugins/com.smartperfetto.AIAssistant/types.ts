@@ -208,18 +208,63 @@ export interface SqlQueryResult {
 }
 
 /**
- * Story Panel state — tracks the Scene Story pipeline lifecycle for the
- * Chat ↔ Story view switch in AIPanel.
+ * Story Panel state — tracks the full Scene Story lifecycle including the
+ * preview/confirmation flow introduced in PR3.
+ *
+ * State machine:
+ *   idle → previewing → preview_cached → completed  (cache hit fast-path)
+ *   idle → previewing → preview_cold   → running → completed | failed
  */
+export type StoryPanelStatus =
+  | 'idle'            // Story tab opened, not yet previewed
+  | 'previewing'      // POST /preview in flight
+  | 'preview_cached'  // Preview returned a cached report
+  | 'preview_cold'    // Preview returned an estimate (no cache)
+  | 'running'         // POST /scene-reconstruct in flight (user confirmed)
+  | 'completed'       // Report ready (fresh or cached)
+  | 'failed';         // Pipeline or preview error
+
+export interface StoryPreviewEstimate {
+  expectedScenes: number;
+  etaSec: number;
+  estimatedUsd: number;
+  confidence: 'low' | 'medium' | 'high';
+}
+
+export interface StoryPreviewCacheHit {
+  reportId: string;
+  createdAt: number;
+  expiresAt: number | null;
+  cachePolicy: string;
+  partialReport: boolean;
+  sceneCount: number;
+  jobCount: number;
+}
+
+export interface StoryPreviewResult {
+  traceDurationSec: number;
+  estimate: StoryPreviewEstimate;
+  cached: StoryPreviewCacheHit | null;
+}
+
 export interface StoryPanelState {
-  status: 'idle' | 'running' | 'completed' | 'failed';
+  status: StoryPanelStatus;
   lastError: string | null;
+  /** Preview result from POST /scene-reconstruct/preview */
+  preview: StoryPreviewResult | null;
+  /** Full cached SceneReport loaded from GET /report/:reportId */
+  cachedReport: any | null;
+  /** Analysis ID from the running pipeline (for cancel) */
+  analysisId: string | null;
 }
 
 export function createStoryPanelState(): StoryPanelState {
   return {
     status: 'idle',
     lastError: null,
+    preview: null,
+    cachedReport: null,
+    analysisId: null,
   };
 }
 
