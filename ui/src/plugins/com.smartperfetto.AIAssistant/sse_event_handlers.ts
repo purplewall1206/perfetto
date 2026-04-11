@@ -55,6 +55,7 @@ import {
 } from './generated';
 import {CONTRACT_ALIASES} from './conclusion_contract_aliases';
 import {STEP_TO_OVERLAY} from './track_overlay';
+import {updateAISharedState} from './ai_shared_state';
 
 type AnalysisHypothesisItem = {
   status?: string;
@@ -3210,6 +3211,27 @@ export function handleSSEEvent(
   const eventData = asRecord(data);
   console.log('[SSEHandlers] SSE event:', eventType, eventData);
 
+  const result = handleSSEEventInner(eventType, eventData, ctx);
+
+  // ── Cross-component shared state updates (F3: Status Bar, etc.) ───
+  // Centralized here so all SSE paths feed the same state (Codex #3).
+  if (result.loadingPhase) {
+    updateAISharedState({currentPhase: result.loadingPhase});
+  }
+  if (eventType === 'error' || eventType === 'skill_error') {
+    updateAISharedState({status: 'error'});
+  } else if (eventType === 'analysis_completed') {
+    updateAISharedState({status: 'completed', lastAnalysisTime: Date.now()});
+  }
+
+  return result;
+}
+
+function handleSSEEventInner(
+  eventType: string,
+  eventData: Record<string, unknown>,
+  ctx: SSEHandlerContext
+): SSEHandlerResult {
   switch (eventType) {
     case 'connected':
       return {};

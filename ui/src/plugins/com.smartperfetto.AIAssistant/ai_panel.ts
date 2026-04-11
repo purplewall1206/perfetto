@@ -55,6 +55,7 @@ import {
   createStreamingAnswerState,
   createStoryPanelState,
   InterventionState,
+  StreamingFlowState,
   DEFAULT_SETTINGS,
   PENDING_BACKEND_TRACE_KEY,
   PRESET_QUESTIONS,
@@ -86,6 +87,16 @@ import {
 // Scene reconstruction logic lives in story_controller.ts; shared constants in scene_constants.ts.
 import {SCENE_DISPLAY_NAMES} from './scene_constants';
 import {StoryController, StoryControllerContext} from './story_controller';
+// AI Everywhere: cross-component shared state + timeline notes
+import {updateAISharedState, resetAISharedState, getAISharedState} from './ai_shared_state';
+import {addBookmarkNotes, clearAIFindingNotes} from './ai_timeline_notes';
+import {
+  TransientState,
+  consumeTransientState,
+  registerTransientSaver,
+  switchFloatingMode,
+  unregisterTransientSaver,
+} from './ai_transient_state';
 
 const DEBUG_AI_PANEL = false;
 
@@ -181,6 +192,10 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
   private sseAbortController: AbortController | null = null;
   // Paragraph-level progressive reveal: tracks how many children have been animated per message
   private revealedBlockCounts = new Map<string, number>();
+  // Transient state saver — bound closure registered in oncreate, cleared in onremove.
+  // Captures input draft, collapsed tables, and active SSE analysis when the
+  // user switches between tab and floating window mode.
+  private transientSaverRef: (() => TransientState) | null = null;
 
   // Delegate to mermaidRenderer module
   private async renderMermaidInElement(container: HTMLElement): Promise<void> {
@@ -720,6 +735,30 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     this.beforeUnloadHandler = () => this.flushSessionSave();
     window.addEventListener('beforeunload', this.beforeUnloadHandler);
 
+    // Register transient state saver. The saver encapsulates the full
+    // handoff protocol so both Pop Out and Dock Back get identical treatment
+    // (Codex HIGH 1: symmetric handoff):
+    //   1. Cancel SSE — stops event processing so the snapshot is stable
+    //      and the next instance can replay cleanly from lastEventId.
+    //   2. Save session — persists messages + bookmarks + agent session IDs
+    //      so the new AIPanel's auto-restore brings the conversation back.
+    //   3. Capture in-memory state — fields that don't live in sessions
+    //      (input draft, collapsed tables, streaming state, dedup sets).
+    this.transientSaverRef = () => {
+      this.cancelSSEConnection();
+      this.saveCurrentSession();
+      if (this.saveSessionTimer) {
+        clearTimeout(this.saveSessionTimer);
+        this.saveSessionTimer = null;
+      }
+      return this.snapshotTransientState();
+    };
+    registerTransientSaver(this.transientSaverRef);
+
+    // Consume any transient state left over from a mode switch — restores
+    // input draft, collapsed tables, and any in-flight SSE analysis.
+    this.restoreTransientState(consumeTransientState());
+
     // Focus input (requires DOM)
     setTimeout(() => {
       const textarea = document.getElementById('ai-input') as HTMLTextAreaElement;
@@ -729,8 +768,27 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
   }
 
   onremove() {
+    // Unregister transient saver first so any in-flight switchFloatingMode()
+    // that hasn't captured yet won't try to call into a torn-down instance.
+    if (this.transientSaverRef) {
+      unregisterTransientSaver(this.transientSaverRef);
+      this.transientSaverRef = null;
+    }
     this.cancelSSEConnection();
     this.resetInterventionState();
+    // Clear any pending conversation flush timer — otherwise its delayed
+    // callback fires on the torn-down instance (Codex MEDIUM 2).
+    if (this.state.streamingFlow.conversationFlushTimer !== undefined) {
+      clearTimeout(this.state.streamingFlow.conversationFlushTimer);
+      this.state.streamingFlow.conversationFlushTimer = undefined;
+    }
+    // Clear pending debounced session save timer. The saver (for mode
+    // switches) already does this, but onremove from trace unload needs
+    // the same treatment to avoid stale callbacks.
+    if (this.saveSessionTimer) {
+      clearTimeout(this.saveSessionTimer);
+      this.saveSessionTimer = null;
+    }
     if (this.unsubscribeClearChat) {
       this.unsubscribeClearChat();
       this.unsubscribeClearChat = undefined;
@@ -758,6 +816,17 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
   }
 
   view(vnode: m.Vnode<AIPanelAttrs>) {
+    // AI Everywhere: consume pending selection analysis (one-shot, Codex #4).
+    // Read + clear atomically to prevent re-trigger on the next redraw.
+    const pending = getAISharedState().pendingSelectionAnalysis;
+    if (pending && !this.state.isLoading) {
+      updateAISharedState({pendingSelectionAnalysis: null});
+      const durMs = ((pending.endNs - pending.startNs) / 1e6).toFixed(1);
+      this.state.input = `分析用户选中区间的性能（${durMs}ms），包括关键线程的 CPU 调度、大小核分布和频率、主要耗时 Slice 诊断`;
+      // Defer to avoid triggering async work inside view()
+      setTimeout(() => this.sendMessage(), 0);
+    }
+
     const providerLabel = this.state.settings.provider.charAt(0).toUpperCase() + this.state.settings.provider.slice(1);
     const isConnected = this.state.aiService !== null;
     // Check backend availability: engine in HTTP_RPC mode, OR backend upload completed/in-progress
@@ -875,6 +944,10 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
               onclick: () => this.clearChat(),
               title: 'New Chat',
             }, m('i.pf-icon', 'add_comment')),
+            m('button.ai-icon-btn', {
+              onclick: () => this.popOutToFloatingWindow(),
+              title: '弹出为浮动窗口（可拖动、可调整大小、跨标签页保持可见）',
+            }, m('i.pf-icon', 'open_in_new')),
             m('button.ai-icon-btn', {
               onclick: () => this.openSettings(),
               title: 'Settings',
@@ -3075,6 +3148,9 @@ Output MUST follow this exact markdown structure:
     this.state.collectedErrors = [];  // Clear error collection for new analysis
     this.resetStreamingFlow();  // Reset progressive transcript for new analysis turn
     this.resetStreamingAnswer();  // Reset incremental answer stream for new analysis turn
+    // AI Everywhere: update cross-component state + clear old timeline notes
+    updateAISharedState({status: 'analyzing', findings: [], currentPhase: '', issueCount: 0});
+    if (this.trace) clearAIFindingNotes(this.trace);
     m.redraw();
 
     try {
@@ -3265,9 +3341,17 @@ Output MUST follow this exact markdown structure:
 
   /**
    * Listen to Agent SSE events from MasterOrchestrator
-   * With automatic reconnection and exponential backoff
+   * With automatic reconnection and exponential backoff.
+   *
+   * @param sessionId The agent session ID to stream from.
+   * @param resumeFromLastEventId If true, preserve the current
+   *   `sseLastEventId` so the backend replays events from that point.
+   *   Used by transient state restore after Pop Out / Dock Back.
    */
-  private async listenToAgentSSE(sessionId: string): Promise<void> {
+  private async listenToAgentSSE(
+    sessionId: string,
+    resumeFromLastEventId: boolean = false,
+  ): Promise<void> {
     const baseApiUrl = buildAssistantApiV1Url(this.state.settings.backendUrl, `/${sessionId}/stream`);
 
     // Cancel any existing connection
@@ -3280,7 +3364,9 @@ Output MUST follow this exact markdown structure:
     // Mark as connecting
     this.state.sseConnectionState = 'connecting';
     this.state.sseRetryCount = 0;
-    this.state.sseLastEventId = null;  // Reset for fresh connection; preserved across reconnects
+    if (!resumeFromLastEventId) {
+      this.state.sseLastEventId = null;  // Reset for fresh connection; preserved across reconnects
+    }
     m.redraw();
 
     // Main connection loop with retry logic
@@ -4646,6 +4732,9 @@ Output MUST follow this exact markdown structure:
     this.resetStreamingFlow();
     this.resetStreamingAnswer();
     this.saveHistory();
+    // AI Everywhere: reset cross-component state + clear timeline notes
+    resetAISharedState();
+    if (this.trace) clearAIFindingNotes(this.trace);
 
     // Show appropriate welcome message based on mode
     if (this.state.backendTraceId || this.engine?.mode === 'HTTP_RPC') {
@@ -4659,6 +4748,126 @@ Output MUST follow this exact markdown structure:
       });
     }
     m.redraw();
+  }
+
+  /**
+   * Pop out the AI panel into a body-level floating window.
+   *
+   * The full handoff (cancel SSE, save session, snapshot state) runs
+   * inside the transient saver registered in oncreate, so this method
+   * is just a one-liner. Dock Back goes through the same saver via
+   * switchFloatingMode('tab').
+   */
+  private popOutToFloatingWindow() {
+    switchFloatingMode('floating');
+  }
+
+  /**
+   * Snapshot per-instance state that's not saved to localStorage sessions,
+   * for hand-off during Pop Out / Dock Back. Called by the registered
+   * transient saver closure in ai_transient_state.ts.
+   *
+   * The saver already cancelled SSE before calling this, so the state
+   * is stable — no event processing can mutate fields between snapshot
+   * and the new instance's restore.
+   *
+   * For replay idempotency (Codex HIGH 3), we must carry the full
+   * streamingFlow/streamingAnswer/displayedSkillProgress state so the
+   * new instance's handlers can dedupe replayed events.
+   */
+  private snapshotTransientState(): TransientState {
+    // isLoading tracks active analysis more reliably than sseConnectionState
+    // (which may be 'disconnected' briefly between connect retries).
+    const isAnalysisActive = this.state.isLoading || !!this.state.agentSessionId;
+    return {
+      inputDraft: this.state.input,
+      collapsedTables: Array.from(this.state.collapsedTables),
+      historyIndex: this.state.historyIndex,
+      activeAnalysis: isAnalysisActive && this.state.agentSessionId
+        ? {
+            agentSessionId: this.state.agentSessionId,
+            lastEventId: this.state.sseLastEventId,
+            agentRunId: this.state.agentRunId,
+            agentRequestId: this.state.agentRequestId,
+            agentRunSequence: this.state.agentRunSequence,
+            loadingPhase: this.state.loadingPhase,
+            // Dedup sets + completion flag — shallow clone (old instance
+            // is frozen after saver's cancelSSEConnection, won't mutate).
+            displayedSkillProgress: Array.from(this.state.displayedSkillProgress),
+            completionHandled: this.state.completionHandled,
+            collectedErrors: [...this.state.collectedErrors],
+            // Streaming UI state — shallow clone of outer object, deep
+            // clone of collections that would otherwise be shared refs.
+            streamingFlow: this.cloneStreamingFlow(),
+            streamingAnswer: {...this.state.streamingAnswer},
+          }
+        : null,
+    };
+  }
+
+  /** Shallow-clone StreamingFlowState with deep copies of its collections. */
+  private cloneStreamingFlow(): StreamingFlowState {
+    const f = this.state.streamingFlow;
+    return {
+      ...f,
+      phases: [...f.phases],
+      thoughts: [...f.thoughts],
+      tools: [...f.tools],
+      outputs: [...f.outputs],
+      conversationLines: [...f.conversationLines],
+      conversationPendingSteps: {...f.conversationPendingSteps},
+      conversationSeenEventIds: new Set(f.conversationSeenEventIds),
+      subAgents: f.subAgents.map((s) => ({...s})),
+      // Timer must NOT be carried across — it references a window-scoped
+      // handle that will expire/fire on the old instance's event loop.
+      // New instance will schedule its own timer if needed.
+      conversationFlushTimer: undefined,
+    };
+  }
+
+  /**
+   * Restore per-instance state from a transient snapshot. Called on the
+   * newly-mounted AIPanel instance after a mode switch. If the snapshot
+   * contains an active SSE analysis, reconnect and resume streaming —
+   * the backend replays events after the saved lastEventId.
+   *
+   * For replay idempotency (Codex HIGH 3), we restore the full dedup
+   * state (displayedSkillProgress, completionHandled, collectedErrors)
+   * and streaming UI state before reconnecting SSE, so replayed events
+   * hit the same handler state the old instance had and don't
+   * re-trigger already-handled paths.
+   */
+  private restoreTransientState(snapshot: TransientState | null): void {
+    if (!snapshot) return;
+
+    this.state.input = snapshot.inputDraft;
+    this.state.collapsedTables = new Set(snapshot.collapsedTables);
+    this.state.historyIndex = snapshot.historyIndex;
+
+    if (snapshot.activeAnalysis) {
+      const a = snapshot.activeAnalysis;
+      // Agent identity + cursor
+      this.state.agentSessionId = a.agentSessionId;
+      // Null cursor → use 0 so backend replays from the start of the
+      // ring buffer (Codex HIGH 2: missing first id: event edge case).
+      this.state.sseLastEventId = a.lastEventId ?? 0;
+      this.state.agentRunId = a.agentRunId;
+      this.state.agentRequestId = a.agentRequestId;
+      this.state.agentRunSequence = a.agentRunSequence;
+      this.state.loadingPhase = a.loadingPhase;
+      // Replay-sensitive handler state (Codex HIGH 3)
+      this.state.displayedSkillProgress = new Set(a.displayedSkillProgress);
+      this.state.completionHandled = a.completionHandled;
+      this.state.collectedErrors = [...a.collectedErrors];
+      this.state.streamingFlow = a.streamingFlow;
+      this.state.streamingAnswer = a.streamingAnswer;
+      // Mark loading + resume SSE. The resumeFromLastEventId flag tells
+      // listenToAgentSSE to preserve sseLastEventId so the initial fetch
+      // appends ?lastEventId=N. The backend replays any events that
+      // arrived during the unmount-remount gap.
+      this.setLoadingState(true);
+      void this.listenToAgentSSE(a.agentSessionId, /* resumeFromLastEventId */ true);
+    }
   }
 
   private openSettings() {
@@ -4911,6 +5120,11 @@ Output MUST follow this exact markdown structure:
     if (bookmarks.length > 0) {
       this.state.bookmarks = bookmarks;
       if (DEBUG_AI_PANEL) console.log(`Extracted ${bookmarks.length} bookmarks from query result`);
+      // AI Everywhere: also create timeline notes for visual annotation
+      if (this.trace) {
+        const findings = addBookmarkNotes(this.trace, bookmarks);
+        updateAISharedState({findings, issueCount: findings.length});
+      }
     }
   }
 
