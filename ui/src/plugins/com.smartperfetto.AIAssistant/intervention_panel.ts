@@ -131,7 +131,7 @@ function getActionButtonStyle(action: InterventionAction, recommended: boolean):
     case 'abort':
       return {
         ...baseStyle,
-        background: 'var(--surface-warning, #fef2f2)',
+        background: 'var(--chat-bg)',
         color: '#dc2626',
         border: '1px solid #fecaca',
       };
@@ -145,16 +145,16 @@ function getActionButtonStyle(action: InterventionAction, recommended: boolean):
     case 'focus':
       return {
         ...baseStyle,
-        background: 'var(--surface-accent, #eef2ff)',
+        background: 'var(--chat-bg)',
         color: '#4f46e5',
         border: '1px solid #c7d2fe',
       };
     default:
       return {
         ...baseStyle,
-        background: 'var(--surface, #f9fafb)',
-        color: 'var(--text-color, #374151)',
-        border: '1px solid var(--border-color, #e5e7eb)',
+        background: 'var(--chat-bg-secondary)',
+        color: 'var(--chat-text)',
+        border: '1px solid var(--chat-border)',
       };
   }
 }
@@ -304,23 +304,23 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
       gap: '12px',
       marginBottom: '16px',
       paddingBottom: '12px',
-      borderBottom: '1px solid var(--border-color, #e5e7eb)',
+      borderBottom: '1px solid var(--chat-border)',
     };
 
     const titleStyle: Record<string, string> = {
       fontSize: '18px',
       fontWeight: '600',
-      color: 'var(--text-color, #1f2937)',
+      color: 'var(--chat-text)',
       margin: '0',
     };
 
     const contextStyle: Record<string, string> = {
-      background: 'var(--surface, #f9fafb)',
+      background: 'var(--chat-bg-secondary)',
       borderRadius: '8px',
       padding: '12px',
       marginBottom: '16px',
       fontSize: '13px',
-      color: 'var(--text-secondary, #6b7280)',
+      color: 'var(--chat-text-secondary)',
     };
 
     const optionsContainerStyle: Record<string, string> = {
@@ -335,7 +335,7 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
       justifyContent: 'flex-end',
       gap: '12px',
       paddingTop: '12px',
-      borderTop: '1px solid var(--border-color, #e5e7eb)',
+      borderTop: '1px solid var(--chat-border)',
     };
 
     return m('div.intervention-panel', { style: panelStyle }, [
@@ -410,11 +410,11 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
             minHeight: '80px',
             padding: '12px',
             borderRadius: '8px',
-            border: '1px solid var(--border-color, #d1d5db)',
+            border: '1px solid var(--chat-border)',
             fontSize: '14px',
             resize: 'vertical',
             background: 'var(--background, white)',
-            color: 'var(--text-color, inherit)',
+            color: 'var(--chat-text)',
           },
           placeholder: '请输入您的具体需求...',
           value: state.customInput,
@@ -431,9 +431,9 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
           style: {
             padding: '10px 20px',
             borderRadius: '6px',
-            border: '1px solid var(--border-color, #d1d5db)',
+            border: '1px solid var(--chat-border)',
             background: 'var(--background, white)',
-            color: 'var(--text-secondary, #6b7280)',
+            color: 'var(--chat-text-secondary)',
             cursor: 'pointer',
             fontSize: '14px',
           },
@@ -445,7 +445,7 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
             padding: '10px 20px',
             borderRadius: '6px',
             border: 'none',
-            background: state.selectedOptionId ? '#3b82f6' : 'var(--text-secondary, #9ca3af)',
+            background: state.selectedOptionId ? 'var(--chat-solid-primary)' : 'var(--chat-text-muted)',
             color: 'white',
             cursor: state.selectedOptionId ? 'pointer' : 'not-allowed',
             fontSize: '14px',

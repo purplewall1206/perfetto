@@ -30,17 +30,17 @@ export interface ChartVisualizerAttrs {
 
 const COLORS = {
   primary: ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6', '#ef4444', '#06b6d4'],
-  text: 'var(--text)',
-  textSecondary: 'var(--text-secondary)',
-  border: 'var(--border)',
+  text: 'var(--chat-text)',
+  textSecondary: 'var(--chat-text-secondary)',
+  border: 'var(--chat-border)',
 };
 
 const STYLES = {
   container: {
     padding: '16px',
-    background: 'var(--background)',
+    background: 'var(--chat-bg)',
     borderRadius: '8px',
-    border: '1px solid var(--border)',
+    border: '1px solid var(--chat-border)',
   },
   title: {
     fontSize: '14px',
@@ -163,7 +163,7 @@ export class ChartVisualizer implements m.ClassComponent<ChartVisualizerAttrs> {
         m('path', {
           d: p.path,
           fill: p.color,
-          stroke: 'var(--background)',
+          stroke: 'var(--chat-bg)',
           strokeWidth: 2,
         })
       )
