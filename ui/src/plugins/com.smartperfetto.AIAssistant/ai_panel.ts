@@ -100,6 +100,36 @@ import {
 
 const DEBUG_AI_PANEL = false;
 
+// Metric card palette keyed by status. Extracted from a triple-ternary that
+// repeated the four intent mappings three times (bg / fg / icon name). The
+// `info` entry doubles as the default for unknown status values.
+const METRIC_STATUS_STYLES: Record<string, {bg: string; fg: string; icon: string}> = {
+  good: {
+    bg: 'color-mix(in srgb, var(--chat-success) 12%, transparent)',
+    fg: 'var(--chat-success)',
+    icon: 'check_circle',
+  },
+  warning: {
+    bg: 'color-mix(in srgb, var(--chat-warning) 12%, transparent)',
+    fg: 'var(--chat-warning)',
+    icon: 'warning',
+  },
+  critical: {
+    bg: 'color-mix(in srgb, var(--chat-error) 12%, transparent)',
+    fg: 'var(--chat-error)',
+    icon: 'error',
+  },
+  info: {
+    bg: 'color-mix(in srgb, var(--pf-color-accent) 12%, transparent)',
+    fg: 'var(--pf-color-accent)',
+    icon: 'analytics',
+  },
+};
+
+function metricStatusStyle(status: string | undefined): {bg: string; fg: string; icon: string} {
+  return (status ? METRIC_STATUS_STYLES[status] : undefined) ?? METRIC_STATUS_STYLES.info;
+}
+
 export interface AIPanelAttrs {
   engine: Engine;
   trace: Trace;
@@ -984,22 +1014,22 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
 
         // View switch toolbar — Chat ↔ Story tabs
         m('div.ai-view-tabs', {
-          style: 'display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--chat-border, #e5e7eb); background: var(--chat-bg-subtle, #fafafa);',
+          style: 'display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--chat-border); background: var(--chat-bg-secondary);',
         }, [
           m('button.ai-view-tab', {
             onclick: () => { this.state.currentView = 'chat'; m.redraw(); },
             title: '聊天视图',
             style: `padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
-                    background: ${this.state.currentView === 'chat' ? '#2563eb' : 'transparent'};
-                    color: ${this.state.currentView === 'chat' ? 'white' : 'var(--chat-text, #333)'};
+                    background: ${this.state.currentView === 'chat' ? 'var(--chat-solid-primary)' : 'transparent'};
+                    color: ${this.state.currentView === 'chat' ? 'var(--chat-user-text)' : 'var(--chat-text)'};
                     font-weight: ${this.state.currentView === 'chat' ? '600' : '400'};`,
           }, '💬 Chat'),
           m('button.ai-view-tab', {
             onclick: () => { this.state.currentView = 'story'; m.redraw(); },
             title: '场景还原视图',
             style: `padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
-                    background: ${this.state.currentView === 'story' ? '#2563eb' : 'transparent'};
-                    color: ${this.state.currentView === 'story' ? 'white' : 'var(--chat-text, #333)'};
+                    background: ${this.state.currentView === 'story' ? 'var(--chat-solid-primary)' : 'transparent'};
+                    color: ${this.state.currentView === 'story' ? 'var(--chat-user-text)' : 'var(--chat-text)'};
                     font-weight: ${this.state.currentView === 'story' ? '600' : '400'};`,
           }, '🎬 Story'),
         ]),
@@ -1269,8 +1299,8 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                       return m('div.ai-collapsed-table', {
                         style: {
                           padding: '8px 12px',
-                          background: 'var(--surface)',
-                          border: '1px solid var(--border)',
+                          background: 'var(--chat-bg-secondary)',
+                          border: '1px solid var(--chat-border)',
                           borderRadius: '6px',
                           cursor: 'pointer',
                           display: 'flex',
@@ -1299,7 +1329,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                           alignItems: 'center',
                           gap: '4px',
                           fontSize: '12px',
-                          color: 'var(--text-secondary)',
+                          color: 'var(--chat-text-secondary)',
                         },
                         onclick: () => {
                           this.state.collapsedTables.add(msg.id);
@@ -1384,7 +1414,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                   style: {
                     marginTop: '12px',
                     borderRadius: '8px',
-                    border: '1px solid var(--border)',
+                    border: '1px solid var(--chat-border)',
                     overflow: 'hidden',
                   },
                 }, [
@@ -1401,21 +1431,21 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                     marginTop: '12px',
                     padding: '16px 20px',
                     borderRadius: '8px',
-                    border: '1px solid var(--border)',
-                    background: 'var(--background)',
+                    border: '1px solid var(--chat-border)',
+                    background: 'var(--chat-bg)',
                     display: 'flex',
                     alignItems: 'center',
                     gap: '16px',
                   },
-                }, [
+                }, (() => {
+                  const metricStyle = metricStatusStyle(msg.metricData.status);
+                  return [
                   m('div', {
                     style: {
                       width: '48px',
                       height: '48px',
                       borderRadius: '50%',
-                      background: msg.metricData.status === 'good' ? '#10b98120' :
-                                  msg.metricData.status === 'warning' ? '#f59e0b20' :
-                                  msg.metricData.status === 'critical' ? '#ef444420' : '#3b82f620',
+                      background: metricStyle.bg,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -1424,19 +1454,15 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                     m('i.pf-icon', {
                       style: {
                         fontSize: '24px',
-                        color: msg.metricData.status === 'good' ? '#10b981' :
-                               msg.metricData.status === 'warning' ? '#f59e0b' :
-                               msg.metricData.status === 'critical' ? '#ef4444' : '#3b82f6',
+                        color: metricStyle.fg,
                       },
-                    }, msg.metricData.status === 'good' ? 'check_circle' :
-                       msg.metricData.status === 'warning' ? 'warning' :
-                       msg.metricData.status === 'critical' ? 'error' : 'analytics'),
+                    }, metricStyle.icon),
                   ]),
                   m('div', { style: { flex: 1 } }, [
                     m('div', {
                       style: {
                         fontSize: '12px',
-                        color: 'var(--text-secondary)',
+                        color: 'var(--chat-text-secondary)',
                         marginBottom: '4px',
                       },
                     }, msg.metricData.title),
@@ -1444,7 +1470,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                       style: {
                         fontSize: '28px',
                         fontWeight: '600',
-                        color: 'var(--text)',
+                        color: 'var(--chat-text)',
                         lineHeight: '1.2',
                       },
                     }, [
@@ -1453,7 +1479,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                         style: {
                           fontSize: '14px',
                           fontWeight: '400',
-                          color: 'var(--text-secondary)',
+                          color: 'var(--chat-text-secondary)',
                           marginLeft: '4px',
                         },
                       }, msg.metricData.unit) : null,
@@ -1461,13 +1487,14 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                     msg.metricData.delta ? m('div', {
                       style: {
                         fontSize: '12px',
-                        color: msg.metricData.delta.startsWith('+') ? '#10b981' :
-                               msg.metricData.delta.startsWith('-') ? '#ef4444' : 'var(--text-secondary)',
+                        color: msg.metricData.delta.startsWith('+') ? 'var(--chat-success)' :
+                               msg.metricData.delta.startsWith('-') ? 'var(--chat-error)' : 'var(--chat-text-secondary)',
                         marginTop: '4px',
                       },
                     }, msg.metricData.delta) : null,
                   ]),
-                ]) : null,
+                  ];
+                })()) : null,
               ]),
 
               // Feedback buttons — show on non-progress assistant messages
@@ -3952,38 +3979,31 @@ Output MUST follow this exact markdown structure:
       setTimeout(() => this.handleStoryPreview(), 0);
     }
 
-    const containerStyle = 'padding: 24px; max-width: 720px; margin: 0 auto; overflow-y: auto; height: 100%;';
-    const cardStyle = 'margin-top: 16px; padding: 16px; border-radius: 8px;';
-
-    return m('div.ai-story-body', {style: containerStyle}, [
+    return m('div.ai-story-body', [
       m('h2', {style: 'margin: 0 0 8px 0;'}, '🎬 场景还原'),
-      m('p', {style: 'color: var(--chat-text-secondary, #888); margin: 0 0 16px 0;'},
+      m('p', {style: 'color: var(--chat-text-secondary); margin: 0 0 16px 0;'},
         '从 Trace 中自动检测用户操作场景并分析性能问题。'),
 
-      // No trace uploaded
       !hasTrace
-        ? m('div', {style: `${cardStyle} background: #fff3cd; color: #856404;`},
+        ? m('div.ai-story-card.ai-story-card--warn',
             '⚠ 请先把 Trace 上传到后端(打开文件后自动完成)')
         : null,
 
-      // ── Previewing ────────────────────────────────────────────────────
       s.status === 'previewing'
-        ? m('div', {style: `${cardStyle} background: #e0f2fe; color: #0369a1;`},
+        ? m('div.ai-story-card.ai-story-card--info',
             '⏳ 正在检查缓存与估算成本...')
         : null,
 
-      // ── Preview: cache hit (loading full report) ──────────────────────
       s.status === 'preview_cached'
-        ? m('div', {style: `${cardStyle} background: #dcfce7; color: #166534;`},
+        ? m('div.ai-story-card.ai-story-card--success',
             '✅ 发现历史缓存报告,正在加载...')
         : null,
 
-      // ── Preview: cold path — show estimate + confirm button ───────────
+      // Preview: cold path — show estimate + confirm button.
       s.status === 'preview_cold' && s.preview
-        ? m('div', {style: `${cardStyle} background: #f0f9ff; border: 1px solid #bae6fd;`}, [
-            m('div', {style: 'font-weight: 600; margin-bottom: 12px; color: #0c4a6e;'},
-              '预估分析成本'),
-            m('div', {style: 'display: flex; gap: 24px; margin-bottom: 16px;'}, [
+        ? m('div.ai-story-card.ai-story-card--cold-preview', [
+            m('div.ai-story-cold-preview-title', '预估分析成本'),
+            m('div.ai-story-cold-preview-metrics', [
               this.renderEstimateMetric(
                 `${s.preview.estimate.expectedScenes}`, '预估场景数'),
               this.renderEstimateMetric(
@@ -3992,54 +4012,40 @@ Output MUST follow this exact markdown structure:
                 `$${s.preview.estimate.estimatedUsd}`, '预估费用'),
             ]),
             s.preview.estimate.confidence === 'low'
-              ? m('div', {style: 'font-size: 12px; color: #94a3b8; margin-bottom: 12px;'},
-                  '* 预估基于启发式公式,实际可能有所偏差')
+              ? m('div.ai-story-hint', '* 预估基于启发式公式,实际可能有所偏差')
               : null,
-            m('div', {style: 'display: flex; gap: 8px;'}, [
-              m('button', {
+            m('div.ai-story-cold-preview-actions', [
+              m('button.ai-story-btn-primary', {
                 onclick: () => this.handleStoryConfirm(),
-                style: 'padding: 10px 24px; font-size: 15px; cursor: pointer; ' +
-                       'background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: 600;',
               }, '▶ 开始分析'),
-              m('button', {
+              m('button.ai-story-btn-secondary', {
                 onclick: () => {
                   this.state.storyState = createStoryPanelState();
                   m.redraw();
                 },
-                style: 'padding: 10px 16px; font-size: 15px; cursor: pointer; ' +
-                       'background: transparent; color: #64748b; border: 1px solid #e2e8f0; border-radius: 8px;',
               }, '取消'),
             ]),
           ])
         : null,
 
-      // ── Running ───────────────────────────────────────────────────────
       s.status === 'running'
-        ? m('div', {style: `${cardStyle} background: #e0f2fe; color: #0369a1;`}, [
+        ? m('div.ai-story-card.ai-story-card--info', [
             m('div', {style: 'margin-bottom: 8px;'}, '🎬 场景还原进行中...'),
-            m('div', {style: 'font-size: 13px; color: #64748b;'},
+            m('div', {style: 'font-size: 13px; color: var(--chat-text-secondary);'},
               '进度消息同步显示在 Chat 视图中。'),
-            m('button', {
+            m('button.ai-story-btn-ghost-danger', {
               onclick: () => this.handleStoryCancel(),
-              style: 'margin-top: 12px; padding: 8px 16px; font-size: 13px; cursor: pointer; ' +
-                     'background: transparent; color: #dc2626; border: 1px solid #fca5a5; border-radius: 6px;',
             }, '取消分析'),
           ])
         : null,
 
-      // ── Completed ─────────────────────────────────────────────────────
-      s.status === 'completed'
-        ? this.renderStoryCompleted()
-        : null,
+      s.status === 'completed' ? this.renderStoryCompleted() : null,
 
-      // ── Failed ────────────────────────────────────────────────────────
       s.status === 'failed'
-        ? m('div', {style: `${cardStyle} background: #fee2e2; color: #991b1b;`}, [
+        ? m('div.ai-story-card.ai-story-card--error', [
             m('div', `❌ ${s.lastError || '场景还原失败'}`),
-            m('button', {
+            m('button.ai-story-btn-retry', {
               onclick: () => this.handleStoryPreview(),
-              style: 'margin-top: 12px; padding: 8px 16px; font-size: 13px; cursor: pointer; ' +
-                     'background: #2563eb; color: white; border: none; border-radius: 6px;',
             }, '重试'),
           ])
         : null,
@@ -4048,8 +4054,8 @@ Output MUST follow this exact markdown structure:
 
   private renderEstimateMetric(value: string, label: string): m.Children {
     return m('div', [
-      m('div', {style: 'font-size: 24px; font-weight: 700; color: #0369a1;'}, value),
-      m('div', {style: 'font-size: 12px; color: #64748b;'}, label),
+      m('div.ai-story-estimate-metric-value', value),
+      m('div.ai-story-estimate-metric-label', label),
     ]);
   }
 
@@ -4059,12 +4065,10 @@ Output MUST follow this exact markdown structure:
    */
   private renderStoryCompleted(): m.Children {
     const report = this.state.storyState.cachedReport;
-    const cardStyle = 'margin-top: 16px; padding: 16px; border-radius: 8px;';
     const scenes: any[] = report?.displayedScenes ?? [];
 
     return m('div', [
-      // Summary card
-      m('div', {style: `${cardStyle} background: #dcfce7; color: #166534;`}, [
+      m('div.ai-story-card.ai-story-card--success', [
         report
           ? m('div', [
               m('div', {style: 'font-weight: 600; margin-bottom: 4px;'},
@@ -4074,22 +4078,19 @@ Output MUST follow this exact markdown structure:
                     report.summary)
                 : null,
               report.cachePolicy === 'disk_7d'
-                ? m('div', {style: 'margin-top: 8px; font-size: 12px; color: #64748b;'},
+                ? m('div', {style: 'margin-top: 8px; font-size: 12px; color: var(--chat-text-secondary);'},
                     `来自缓存 (${new Date(report.createdAt).toLocaleString()})`)
                 : null,
             ])
           : '✅ 场景还原完成。切换到 Chat 视图查看完整结果。',
       ]),
 
-      // Scene table (inline, mirrors the Chat renderResult table)
       scenes.length > 0
-        ? m('div', {style: `${cardStyle} background: var(--chat-bg-secondary, #1e293b); overflow-x: auto;`}, [
-            m('table', {style: 'width: 100%; border-collapse: collapse; font-size: 13px;'}, [
-              m('thead', m('tr', {style: 'border-bottom: 1px solid #334155;'},
-                ['#', '类型', '时长', '应用/进程', '状态'].map(h =>
-                  m('th', {style: 'padding: 8px 12px; text-align: left; color: #94a3b8; font-weight: 500;'}, h),
-                ),
-              )),
+        ? m('div.ai-story-scenes-table', [
+            m('table', [
+              m('thead',
+                m('tr', ['#', '类型', '时长', '应用/进程', '状态'].map(h => m('th', h))),
+              ),
               m('tbody', scenes.map((scene: any, i: number) => {
                 const displayName = SCENE_DISPLAY_NAMES[scene.sceneType] ?? scene.sceneType;
                 const dur = scene.durationMs >= 1000
@@ -4098,39 +4099,34 @@ Output MUST follow this exact markdown structure:
                 const severity = scene.severity === 'bad' ? '🔴'
                   : scene.severity === 'warning' ? '🟡'
                   : scene.severity === 'good' ? '🟢' : '⚪';
+                const stateClass = scene.analysisState === 'completed' ? 'ai-story-scene-state--completed'
+                  : scene.analysisState === 'failed' ? 'ai-story-scene-state--failed'
+                  : 'ai-story-scene-state--pending';
                 return m('tr', {
                   key: scene.id,
-                  style: 'border-bottom: 1px solid #1e293b; cursor: pointer;',
                   title: `点击跳转到 ${scene.startTs}`,
                 }, [
-                  m('td', {style: 'padding: 6px 12px; color: #64748b;'}, `${i + 1}`),
-                  m('td', {style: 'padding: 6px 12px; color: #e2e8f0;'}, `${severity} ${displayName}`),
-                  m('td', {style: 'padding: 6px 12px; color: #e2e8f0; font-variant-numeric: tabular-nums;'}, dur),
-                  m('td', {style: 'padding: 6px 12px; color: #94a3b8; max-width: 200px; overflow: hidden; text-overflow: ellipsis;'},
-                    scene.processName ?? '-'),
-                  m('td', {style: 'padding: 6px 12px;'},
-                    m('span', {style: `font-size: 11px; padding: 2px 6px; border-radius: 4px; ${
-                      scene.analysisState === 'completed' ? 'background: #166534; color: #dcfce7;'
-                      : scene.analysisState === 'failed' ? 'background: #991b1b; color: #fee2e2;'
-                      : 'background: #334155; color: #94a3b8;'
-                    }`}, scene.analysisState ?? 'not_planned')),
+                  m('td.col-index', `${i + 1}`),
+                  m('td.col-type', `${severity} ${displayName}`),
+                  m('td.col-duration', dur),
+                  m('td.col-process', scene.processName ?? '-'),
+                  m('td',
+                    m(`span.ai-story-scene-state.${stateClass}`,
+                      scene.analysisState ?? 'not_planned')),
                 ]);
               })),
             ]),
           ])
         : null,
 
-      m('button', {
+      m('button.ai-story-btn-ghost-accent', {
         onclick: () => {
-          // Clear stale cached data, then start fresh analysis directly.
           // Do NOT reset to idle — that re-triggers handleStoryPreview()
           // which hits the cache again and shows the same old result.
           this.state.storyState.cachedReport = null;
           this.state.storyState.preview = null;
           this.handleStoryConfirm({forceRefresh: true});
         },
-        style: 'margin-top: 12px; padding: 8px 16px; font-size: 13px; cursor: pointer; ' +
-               'background: transparent; color: #2563eb; border: 1px solid #bfdbfe; border-radius: 6px;',
       }, '重新分析'),
     ]);
   }

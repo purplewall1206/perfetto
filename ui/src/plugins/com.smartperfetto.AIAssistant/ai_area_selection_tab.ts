@@ -19,6 +19,7 @@
 import m from 'mithril';
 import {AreaSelection, AreaSelectionTab, ContentWithLoadingFlag} from '../../public/selection';
 import {Trace} from '../../public/trace';
+import {Icon} from '../../widgets/icon';
 import {NUM, NUM_NULL} from '../../trace_processor/query_result';
 import {updateAISharedState, getAISharedState} from './ai_shared_state';
 import {formatDurationAuto} from './renderers/formatters';
@@ -222,7 +223,7 @@ export function createAIAreaSelectionTab(trace: Trace): AreaSelectionTab {
                 if (!isAnalyzing) (e.target as HTMLElement).style.background = ANALYZE_BTN_BG;
               },
             }, [
-              m('span.material-icons', {style: 'font-size: 16px'}, 'smart_toy'),
+              m(Icon, {icon: 'smart_toy', style: 'font-size: 16px'}),
               isAnalyzing ? 'AI 分析中...' : 'AI 深度分析',
             ]),
             m('span', {style: STYLES.hint}, hintText),

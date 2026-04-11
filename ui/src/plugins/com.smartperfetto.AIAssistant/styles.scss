@@ -17,78 +17,146 @@
 // ============================================================================
 
 // ----------------------------------------------------------------------------
-// Theme Variables
+// SCSS helpers
+// ----------------------------------------------------------------------------
+
+// tint($c, $p)  — base color × alpha$p laid over transparent. Used for
+//                 low-contrast overlays like hover backgrounds / alert tints.
+// shade($c, $p) — base color × alpha$p laid over black. Used for darker
+//                 hover states on solid-colored buttons.
+@function tint($color, $pct) {
+  @return color-mix(in srgb, $color $pct, transparent);
+}
+
+@function shade($color, $pct) {
+  @return color-mix(in srgb, $color $pct, black);
+}
+
+// ----------------------------------------------------------------------------
+// Theme tokens
+//
+// The AI floating window is portal-mounted to <body> (see
+// ai_floating_window.ts:setupFloatingWindow), so .ai-panel lives outside the
+// .pf-theme-provider subtree that normally defines --pf-color-*. We therefore
+// self-inject Perfetto's token set here. Dark mode is driven by ai_panel.ts
+// setting data-theme="dark" based on the OS prefers-color-scheme query.
 // ----------------------------------------------------------------------------
 
 .ai-panel {
-  // Light theme (default)
-  --chat-bg: #ffffff;
-  --chat-bg-secondary: #f7f7f8;
-  --chat-bg-tertiary: #ececf1;
-  --chat-text: #1a1a1a;
-  --chat-text-secondary: #6b7280;
-  --chat-text-muted: #9ca3af;
-  --chat-border: #e5e7eb;
-  --chat-border-light: #f3f4f6;
+  // ── Light mode tokens ──────────────────────────────────────────────────
+  // Values mirror theme_provider.scss .pf-theme-provider--light exactly.
+  --pf-color-background: #ffffff;
+  --pf-color-background-secondary: #edf0f1;
+  --pf-color-background-tertiary: #e3e9eb;
+  --pf-color-text: #333333;
+  --pf-color-text-muted: #75797c;
+  --pf-color-text-hint: #808080;
+  --pf-color-border: #cccccc;
+  --pf-color-border-secondary: #e0e0e0;
+  --pf-color-primary: #3d5688;
+  --pf-color-text-on-primary: #ffffff;
+  --pf-color-interactive-base: rgb(4, 33, 56);
+  --pf-color-accent: #2667e7;
+  --pf-color-text-on-accent: #ffffff;
+  --pf-color-success: rgb(0, 128, 0);
+  --pf-color-text-on-success: #ffffff;
+  --pf-color-warning: rgb(232, 158, 0);
+  // text-on-warning is dark because Perfetto's warning is a warm orange that
+  // needs dark text for AA contrast.
+  --pf-color-text-on-warning: var(--pf-color-text);
+  --pf-color-danger: rgb(202, 38, 38);
+  --pf-color-text-on-danger: #ffffff;
+  --pf-color-box-shadow: rgba(0, 0, 0, 0.2);
+  // Sidebar surface tokens used by ai_floating_window.ts STYLES.titlebar so
+  // the title bar reads as Perfetto chrome rather than a 3rd-party overlay.
+  --pf-sidebar-surface: #262f3c;
+  --pf-sidebar-on-surface: #c8c8c8;
+  // Chart palette slot 7 (purple) used by .entity-cell to color entity IDs.
+  --pf-chart-color-7: #9334e6;
 
-  // Accent colors
-  --chat-primary: #6366f1;
-  --chat-primary-hover: #4f46e5;
-  --chat-primary-light: rgba(99, 102, 241, 0.1);
-  --chat-gradient: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  // ── --chat-* alias layer ───────────────────────────────────────────────
+  // Aliases onto the Perfetto tokens above. These names are kept because the
+  // rest of this file has hundreds of var(--chat-*) call sites; renaming all
+  // of them would be a large diff with little value. Because CSS variables
+  // resolve at use time, switching data-theme="dark" transparently re-skins
+  // every consumer through this alias layer.
+  --chat-bg: var(--pf-color-background);
+  --chat-bg-secondary: var(--pf-color-background-secondary);
+  --chat-bg-tertiary: var(--pf-color-background-tertiary);
+  --chat-text: var(--pf-color-text);
+  --chat-text-secondary: var(--pf-color-text-muted);
+  --chat-text-muted: var(--pf-color-text-hint);
+  --chat-border: var(--pf-color-border);
+  --chat-border-light: var(--pf-color-border-secondary);
 
-  // Message colors
-  --chat-user-bubble: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-  --chat-user-text: #ffffff;
-  --chat-ai-bubble: #f7f7f8;
-  --chat-ai-border: #e5e7eb;
+  --chat-primary: var(--pf-color-primary);
+  --chat-primary-hover: var(--pf-color-interactive-base);
+  --chat-primary-light: tint(var(--pf-color-primary), 10%);
+  --chat-solid-primary: var(--pf-color-primary);
 
-  // Status colors
-  --chat-success: #10b981;
-  --chat-warning: #f59e0b;
-  --chat-error: #ef4444;
+  // Subtle slate-blue gradient (primary → primary lightened 80% with white).
+  --chat-gradient: linear-gradient(
+    135deg,
+    var(--pf-color-primary),
+    color-mix(in srgb, var(--pf-color-primary) 80%, white)
+  );
 
-  // Shadows
-  --chat-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --chat-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --chat-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
-  --chat-shadow-primary: 0 4px 14px rgba(99, 102, 241, 0.25);
+  --chat-user-bubble: var(--chat-solid-primary);
+  --chat-user-text: var(--pf-color-text-on-primary);
+  --chat-ai-bubble: var(--pf-color-background-secondary);
+  --chat-ai-border: var(--pf-color-border);
 
-  // Code colors
-  --chat-code-bg: #f3f4f6;
-  --chat-code-text: #e11d48;
+  --chat-success: var(--pf-color-success);
+  --chat-warning: var(--pf-color-warning);
+  --chat-error: var(--pf-color-danger);
 
-  // Scrollbar
-  --chat-scrollbar: #d1d5db;
-  --chat-scrollbar-hover: #9ca3af;
+  --chat-shadow-sm: 0 1px 2px var(--pf-color-box-shadow);
+  --chat-shadow-md: 0 4px 12px var(--pf-color-box-shadow);
+  --chat-shadow-lg: 0 8px 24px var(--pf-color-box-shadow);
+  --chat-shadow-primary: 0 4px 14px tint(var(--pf-color-primary), 25%);
+
+  --chat-code-bg: var(--pf-color-background-tertiary);
+  --chat-code-text: var(--pf-color-danger);
+
+  --chat-scrollbar: var(--pf-color-border);
+  --chat-scrollbar-hover: var(--pf-color-text-muted);
+
+  // Tracks Perfetto's chart slot 7 so entity cells follow dark mode.
+  --chat-entity-color: var(--pf-chart-color-7);
 }
 
-// Dark theme
-.ai-panel[data-theme="dark"],
-.ai-panel.dark-theme {
-  --chat-bg: #1a1a2e;
-  --chat-bg-secondary: #16213e;
-  --chat-bg-tertiary: #0f3460;
-  --chat-text: #e4e4e7;
-  --chat-text-secondary: #a1a1aa;
-  --chat-text-muted: #71717a;
-  --chat-border: #27272a;
-  --chat-border-light: #3f3f46;
-
-  --chat-primary-light: rgba(99, 102, 241, 0.15);
-
-  --chat-ai-bubble: #27272a;
-  --chat-ai-border: #3f3f46;
-
-  --chat-code-bg: #27272a;
-  --chat-code-text: #f472b6;
-
-  --chat-scrollbar: #3f3f46;
-  --chat-scrollbar-hover: #52525b;
-
-  --chat-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --chat-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
-  --chat-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+// ── Dark mode override ──────────────────────────────────────────────────
+// Driven by ai_panel.ts detectDarkMode() watching OS prefers-color-scheme.
+// Only re-declares --pf-color-* (+ sidebar + chart-7) — the --chat-* aliases
+// above resolve through them at use time, so every consumer re-skins for free.
+// Values mirror theme_provider.scss .pf-theme-provider--dark.
+.ai-panel[data-theme="dark"] {
+  --pf-color-background: #202020;
+  --pf-color-background-secondary: #343434;
+  --pf-color-background-tertiary: #4a4a4a;
+  --pf-color-text: #dce0e2;
+  --pf-color-text-muted: #a0a2a5;
+  --pf-color-text-hint: #9aa0a6;
+  --pf-color-border: #484848;
+  --pf-color-border-secondary: #383838;
+  --pf-color-primary: #598bed;
+  --pf-color-text-on-primary: #333333;
+  --pf-color-interactive-base: white;
+  --pf-color-accent: #2667e7;
+  --pf-color-text-on-accent: #ffffff;
+  --pf-color-success: rgb(99, 192, 99);
+  --pf-color-text-on-success: #333333;
+  --pf-color-warning: rgb(244, 188, 67);
+  --pf-color-text-on-warning: #333333;
+  --pf-color-danger: rgb(230, 90, 90);
+  --pf-color-text-on-danger: #333333;
+  --pf-color-box-shadow: rgba(0, 0, 0, 0.4);
+  // In dark mode Perfetto sidebars reuse background-secondary — no distinct
+  // deep-slate surface — so the floating titlebar flattens into the rest of
+  // the chrome.
+  --pf-sidebar-surface: #343434;
+  --pf-sidebar-on-surface: #dce0e2;
+  --pf-chart-color-7: #c58af9;
 }
 
 // ----------------------------------------------------------------------------
@@ -162,7 +230,7 @@
 
   // SSE streaming connection states
   &.sse-connecting {
-    background: var(--chat-warning, #f59e0b);
+    background: var(--chat-warning);
     animation: sse-pulse 1.5s ease-in-out infinite;
   }
 
@@ -237,23 +305,25 @@
   }
 }
 
-// Selection analysis button - contextual, appears when user has a Perfetto selection
+// Selection analysis button — contextual CTA that appears when the user has
+// a Perfetto selection. Uses the warning intent so the orange reads as
+// "you have something selected, act on it" without the vivid SaaS-style
+// gradient of the original.
 .ai-selection-btn {
-  background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
-  color: white;
-  border-color: #f59e0b;
+  background: var(--chat-warning);
+  color: var(--pf-color-text-on-warning);
+  border-color: var(--chat-warning);
   font-weight: 600;
   animation: selection-btn-pulse 2s ease-in-out infinite;
 
   .pf-icon {
-    color: white;
+    color: var(--pf-color-text-on-warning);
   }
 
   &:hover:not(:disabled) {
-    background: linear-gradient(135deg, #d97706 0%, #dc2626 100%);
-    color: white;
-    border-color: #d97706;
-    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.4);
+    background: shade(var(--chat-warning), 88%);
+    border-color: shade(var(--chat-warning), 88%);
+    box-shadow: 0 2px 8px tint(var(--chat-warning), 40%);
     animation: none;
   }
 }
@@ -263,22 +333,22 @@
   50% { opacity: 0.85; }
 }
 
-// Teaching button - special styling for educational content
+// Teaching button — uses accent (mid blue) so it stays distinct from both
+// the slate-blue primary CTA (send) and the orange warning CTA (selection).
 .ai-teaching-btn {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border-color: #667eea;
+  background: var(--pf-color-accent);
+  color: var(--pf-color-text-on-accent);
+  border-color: var(--pf-color-accent);
   font-weight: 600;
 
   .pf-icon {
-    color: white;
+    color: var(--pf-color-text-on-accent);
   }
 
   &:hover:not(:disabled) {
-    background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
-    color: white;
-    border-color: #5a67d8;
-    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+    background: shade(var(--pf-color-accent), 88%);
+    border-color: shade(var(--pf-color-accent), 88%);
+    box-shadow: 0 2px 8px tint(var(--pf-color-accent), 40%);
   }
 }
 
@@ -870,7 +940,7 @@
 .ai-typing-phase {
   margin-left: 6px;
   font-size: 11px;
-  color: var(--text-secondary, #6b7280);
+  color: var(--chat-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -882,7 +952,7 @@
 // Context indicator (below messages, above input)
 .ai-context-indicator {
   font-size: 11px;
-  color: var(--text-secondary, #6b7280);
+  color: var(--chat-text-secondary);
   padding: 2px 8px;
   margin-bottom: 4px;
   opacity: 0.8;
@@ -947,25 +1017,30 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--chat-gradient);
+  // Solid slate-blue fill instead of the previous purple gradient — keeps
+  // the button readable as a "primary" without competing visually with the
+  // rest of the Perfetto chrome around it.
+  background: var(--chat-solid-primary);
   border: none;
   border-radius: 50%;
-  color: white;
+  color: var(--chat-user-text);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: filter 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
   flex-shrink: 0;
 
   .pf-icon {
     font-size: 16px;
   }
 
+  // Hover and active feedback use brightness/box-shadow rather than scale
+  // so the button doesn't grow into the input field on hover.
   &:hover:not(:disabled) {
-    transform: scale(1.05);
-    box-shadow: var(--chat-shadow-sm);
+    filter: brightness(1.08);
+    box-shadow: var(--chat-shadow-md);
   }
 
   &:active:not(:disabled) {
-    transform: scale(0.95);
+    filter: brightness(0.92);
   }
 
   &:disabled {
@@ -978,7 +1053,7 @@
   }
 
   &.sending {
-    background: var(--chat-gradient);
+    background: var(--chat-solid-primary);
 
     .pf-icon {
       animation: spin 1s linear infinite;
@@ -986,12 +1061,11 @@
   }
 
   &.ai-stop-btn {
-    background: var(--chat-error, #ef4444);
+    background: var(--chat-error);
 
     &:hover {
-      background: #dc2626;
-      transform: scale(1.05);
-      box-shadow: var(--chat-shadow-sm);
+      filter: brightness(1.08);
+      box-shadow: var(--chat-shadow-md);
     }
   }
 }
@@ -1017,8 +1091,8 @@
   gap: 6px;
   margin-top: 4px;
   padding: 6px 10px;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.2);
+  background: tint(var(--chat-warning), 10%);
+  border: 1px solid tint(var(--chat-warning), 20%);
   border-radius: 6px;
   font-size: 11px;
   color: var(--chat-warning);
@@ -1036,11 +1110,11 @@
   gap: 8px;
   margin: 8px 12px;
   padding: 8px 12px;
-  background: rgba(59, 130, 246, 0.08);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  background: tint(var(--pf-color-accent), 8%);
+  border: 1px solid tint(var(--pf-color-accent), 20%);
   border-radius: 8px;
   font-size: 12px;
-  color: var(--chat-accent, #3b82f6);
+  color: var(--pf-color-accent);
 
   .pf-icon {
     font-size: 16px;
@@ -1066,11 +1140,11 @@
   gap: 8px;
   margin: 8px 12px;
   padding: 8px 12px;
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: tint(var(--chat-error), 8%);
+  border: 1px solid tint(var(--chat-error), 20%);
   border-radius: 8px;
   font-size: 12px;
-  color: var(--chat-error, #ef4444);
+  color: var(--chat-error);
 
   .pf-icon {
     font-size: 16px;
@@ -1089,16 +1163,16 @@
 
 .ai-disconnect-retry-btn {
   padding: 3px 10px;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: 1px solid tint(var(--chat-error), 30%);
   border-radius: 4px;
   background: transparent;
-  color: var(--chat-error, #ef4444);
+  color: var(--chat-error);
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
 
   &:hover {
-    background: rgba(239, 68, 68, 0.1);
+    background: tint(var(--chat-error), 10%);
   }
 }
 
@@ -1124,7 +1198,7 @@
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: var(--chat-text-muted, #9ca3af);
+  color: var(--chat-text-muted);
   cursor: pointer;
   padding: 0;
 
@@ -1133,12 +1207,12 @@
   }
 
   &:hover {
-    background: var(--chat-bg-secondary, #f3f4f6);
-    color: var(--chat-text, #374151);
+    background: var(--chat-bg-secondary);
+    color: var(--chat-text);
   }
 
   &.active {
-    color: var(--chat-primary, #3b82f6);
+    color: var(--chat-primary);
     opacity: 1;
   }
 }
@@ -1158,25 +1232,25 @@
   padding: 6px 10px;
   border-radius: 6px;
   font-size: 11px;
-  border: 1px solid var(--chat-border, #e5e7eb);
-  background: var(--chat-bg-secondary, #f9fafb);
+  border: 1px solid var(--chat-border);
+  background: var(--chat-bg-secondary);
   min-width: 180px;
   flex: 1;
 
   &.sub-agent-running {
-    border-color: rgba(59, 130, 246, 0.3);
-    background: rgba(59, 130, 246, 0.05);
+    border-color: tint(var(--pf-color-accent), 30%);
+    background: tint(var(--pf-color-accent), 5%);
   }
 
   &.sub-agent-completed {
-    border-color: rgba(34, 197, 94, 0.3);
-    background: rgba(34, 197, 94, 0.05);
+    border-color: tint(var(--chat-success), 30%);
+    background: tint(var(--chat-success), 5%);
   }
 
   &.sub-agent-failed,
   &.sub-agent-stopped {
-    border-color: rgba(239, 68, 68, 0.2);
-    background: rgba(239, 68, 68, 0.05);
+    border-color: tint(var(--chat-error), 20%);
+    background: tint(var(--chat-error), 5%);
   }
 }
 
@@ -1187,12 +1261,12 @@
 
 .ai-sub-agent-name {
   font-weight: 600;
-  color: var(--chat-text, #1f2937);
+  color: var(--chat-text);
   white-space: nowrap;
 }
 
 .ai-sub-agent-desc {
-  color: var(--chat-text-muted, #6b7280);
+  color: var(--chat-text-muted);
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1200,7 +1274,7 @@
 }
 
 .ai-sub-agent-meta {
-  color: var(--chat-text-muted, #6b7280);
+  color: var(--chat-text-muted);
   font-size: 10px;
   white-space: nowrap;
   flex-shrink: 0;
@@ -1395,7 +1469,7 @@
 
     // No zebra striping - Perfetto style
     &:hover {
-      background: rgba(0, 0, 0, 0.04);
+      background: var(--pf-color-background-secondary);
     }
 
     &.clickable {
@@ -1410,10 +1484,12 @@
     max-width: 180px;
   }
 
-  // Timestamp/time column - clickable, colored
+  // Timestamp/time column - clickable, colored.
+  // Uses Perfetto accent (mid blue) which is already the conventional
+  // "navigable" color in Perfetto chrome.
   .col-timestamp,
   .timestamp-cell {
-    color: #1a73e8; // Perfetto blue
+    color: var(--pf-color-accent);
     cursor: pointer;
     font-family: 'Roboto Mono', 'SF Mono', monospace;
     font-size: 10px;
@@ -1424,9 +1500,11 @@
     }
   }
 
-  // Entity ID column - clickable for focus tracking (v2.0)
+  // Entity ID column - clickable for focus tracking (v2.0).
+  // Uses --chat-entity-color (purple from Perfetto chart palette slot 7) so
+  // it stays visually distinct from timestamps but still on-brand.
   .entity-cell {
-    color: #9c27b0; // Purple for entity IDs
+    color: var(--chat-entity-color);
     cursor: pointer;
     font-family: 'Roboto Mono', 'SF Mono', monospace;
     font-size: 10px;
@@ -1434,7 +1512,7 @@
 
     &:hover {
       text-decoration: underline;
-      background: rgba(156, 39, 176, 0.1);
+      background: tint(var(--chat-entity-color), 12%);
     }
   }
 
@@ -1474,26 +1552,6 @@
   }
 }
 
-// Dark theme adjustments for table
-.ai-panel[data-theme="dark"] .sql-result-table,
-.ai-panel.dark-theme .sql-result-table {
-  tbody tr:hover {
-    background: rgba(255, 255, 255, 0.05);
-  }
-
-  .col-timestamp,
-  .timestamp-cell {
-    color: #8ab4f8; // Lighter blue for dark mode
-  }
-
-  .entity-cell {
-    color: #ce93d8; // Lighter purple for dark mode
-
-    &:hover {
-      background: rgba(156, 39, 176, 0.15);
-    }
-  }
-}
 
 // Statistics section
 .sql-result-stats {
@@ -1709,7 +1767,7 @@
         align-items: center;
         gap: 3px;
         font-size: 10px;
-        background: var(--chat-bg-tertiary, rgba(0,0,0,0.05));
+        background: var(--chat-bg-tertiary);
         padding: 2px 6px;
         border-radius: 3px;
         white-space: nowrap;
@@ -2313,7 +2371,7 @@
 
     &:hover {
       transform: translateY(-1px);
-      box-shadow: 0 6px 20px rgba(99, 102, 241, 0.3);
+      box-shadow: 0 6px 20px tint(var(--chat-solid-primary), 30%);
     }
 
     &:active {
@@ -2420,10 +2478,10 @@
 
 @keyframes pulse {
   0%, 100% {
-    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4);
+    box-shadow: 0 0 0 0 tint(var(--chat-solid-primary), 40%);
   }
   50% {
-    box-shadow: 0 0 0 16px rgba(99, 102, 241, 0);
+    box-shadow: 0 0 0 16px transparent;
   }
 }
 
@@ -2463,7 +2521,7 @@
 
   &:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+    box-shadow: 0 8px 24px tint(var(--chat-solid-primary), 35%);
   }
 
   &:active {
@@ -2797,7 +2855,7 @@ tr.detail-row {
     align-items: center;
     gap: 8px;
     padding: 12px;
-    background: rgba(239, 68, 68, 0.1);
+    background: tint(var(--chat-error), 10%);
     border-radius: 6px;
     color: var(--chat-error);
     font-size: 13px;
@@ -2935,12 +2993,12 @@ tr.detail-row {
   display: inline-block;
   padding: 2px 8px;
   margin: 0 2px;
-  background: var(--chat-code-bg, rgba(0, 0, 0, 0.05));
-  border: 1px solid var(--chat-border, #e0e0e0);
+  background: var(--chat-code-bg);
+  border: 1px solid var(--chat-border);
   border-radius: 4px;
   font-family: monospace;
   font-size: 0.9em;
-  color: var(--chat-primary, #6366f1);
+  color: var(--chat-primary);
   cursor: pointer;
   transition: all 0.2s ease;
 
@@ -2950,9 +3008,9 @@ tr.detail-row {
   }
 
   &:hover {
-    background: var(--chat-primary, #6366f1);
+    background: var(--chat-primary);
     color: white;
-    border-color: var(--chat-primary, #6366f1);
+    border-color: var(--chat-primary);
     transform: translateY(-1px);
     box-shadow: var(--chat-shadow-sm);
   }
@@ -3237,6 +3295,13 @@ tr.detail-row {
 // Severity Badge Styles
 // ----------------------------------------------------------------------------
 
+// Severity badges map a 6-tier source taxonomy onto Perfetto's 3 semantic
+// intents. Stronger tiers get a denser tint background + stronger foreground.
+@mixin severity-badge($intent, $bg-pct, $fg) {
+  background: tint($intent, $bg-pct);
+  color: $fg;
+}
+
 .ai-severity-badge {
   display: inline-block;
   padding: 2px 8px;
@@ -3244,31 +3309,14 @@ tr.detail-row {
   font-size: 0.8em;
   font-weight: 500;
 
-  &.critical { background: #ffebee; color: #c62828; }
-  &.high { background: #fff3e0; color: #ef6c00; }
-  &.warning { background: #fffde7; color: #f9a825; }
-  &.medium { background: #fffde7; color: #f9a825; }
-  &.info { background: #e3f2fd; color: #1565c0; }
-  &.low { background: #e8f5e9; color: #2e7d32; }
+  &.critical { @include severity-badge(var(--pf-color-danger),  18%, var(--pf-color-danger)); }
+  &.high     { @include severity-badge(var(--pf-color-danger),  12%, color-mix(in srgb, var(--pf-color-danger) 85%, var(--pf-color-text))); }
+  &.warning  { @include severity-badge(var(--pf-color-warning), 18%, shade(var(--pf-color-warning), 85%)); }
+  &.medium   { @include severity-badge(var(--pf-color-warning), 12%, shade(var(--pf-color-warning), 85%)); }
+  &.info     { @include severity-badge(var(--pf-color-accent),  12%, var(--pf-color-accent)); }
+  &.low      { @include severity-badge(var(--pf-color-success), 12%, var(--pf-color-success)); }
 }
 
-// Dark theme adjustments
-.ai-panel[data-theme="dark"],
-.ai-panel.dark-theme {
-  .ai-clickable-timestamp {
-    background: var(--chat-bg-tertiary);
-    border-color: var(--chat-border);
-  }
-
-  .ai-severity-badge {
-    &.critical { background: rgba(198, 40, 40, 0.2); color: #ef5350; }
-    &.high { background: rgba(239, 108, 0, 0.2); color: #ffa726; }
-    &.warning { background: rgba(249, 168, 37, 0.2); color: #ffca28; }
-    &.medium { background: rgba(249, 168, 37, 0.2); color: #ffca28; }
-    &.info { background: rgba(21, 101, 192, 0.2); color: #42a5f5; }
-    &.low { background: rgba(46, 125, 50, 0.2); color: #66bb6a; }
-  }
-}
 
 // ----------------------------------------------------------------------------
 // Scene Navigation Bar
@@ -3467,8 +3515,8 @@ tr.detail-row {
 // =============================================================================
 
 .ai-icon-btn.active {
-  color: #4285f4;
-  background: rgba(66, 133, 244, 0.1);
+  color: var(--pf-color-accent);
+  background: tint(var(--pf-color-accent), 10%);
   border-radius: 4px;
 }
 
@@ -3477,7 +3525,13 @@ tr.detail-row {
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px;
-  background: linear-gradient(90deg, rgba(66, 133, 244, 0.08), rgba(234, 67, 53, 0.08));
+  // Subtle accent→danger gradient hints at "comparing two things" without
+  // being a loud google-blue + red bar.
+  background: linear-gradient(
+    90deg,
+    tint(var(--pf-color-accent), 8%),
+    tint(var(--pf-color-danger), 8%)
+  );
   border-bottom: 1px solid var(--chat-border);
   font-size: 12px;
   gap: 8px;
@@ -3517,15 +3571,15 @@ tr.detail-row {
 
 .ai-comparison-switch {
   padding: 2px 10px;
-  border: 1px solid #4285f4;
+  border: 1px solid var(--pf-color-accent);
   border-radius: 4px;
   background: transparent;
-  color: #4285f4;
+  color: var(--pf-color-accent);
   font-size: 11px;
   cursor: pointer;
 
   &:hover {
-    background: rgba(66, 133, 244, 0.1);
+    background: tint(var(--pf-color-accent), 10%);
   }
 
   &:disabled {
@@ -3545,9 +3599,9 @@ tr.detail-row {
   line-height: 1;
 
   &:hover {
-    background: rgba(234, 67, 53, 0.1);
-    color: #ea4335;
-    border-color: #ea4335;
+    background: tint(var(--pf-color-danger), 10%);
+    color: var(--pf-color-danger);
+    border-color: var(--pf-color-danger);
   }
 }
 
@@ -3576,12 +3630,12 @@ tr.detail-row {
   transition: background 0.15s;
 
   &:hover {
-    background: rgba(66, 133, 244, 0.08);
+    background: tint(var(--pf-color-accent), 8%);
   }
 
   &.selected {
-    background: rgba(66, 133, 244, 0.15);
-    border: 1px solid rgba(66, 133, 244, 0.3);
+    background: tint(var(--pf-color-accent), 15%);
+    border: 1px solid tint(var(--pf-color-accent), 30%);
   }
 }
 
@@ -3605,4 +3659,217 @@ tr.detail-row {
   text-align: center;
   color: var(--chat-text-muted);
   font-size: 13px;
+}
+
+// ----------------------------------------------------------------------------
+// Story Reconstruction View
+// ----------------------------------------------------------------------------
+
+.ai-story-body {
+  padding: 24px;
+  max-width: 720px;
+  margin: 0 auto;
+  overflow-y: auto;
+  height: 100%;
+}
+
+// Status cards shown in the Story view (no trace / previewing / preview_cold /
+// running / completed / failed). Each modifier picks an intent from the token
+// palette so the card looks correct in both light and dark mode.
+.ai-story-card {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 8px;
+
+  &--warn {
+    background: tint(var(--chat-warning), 12%);
+    color: var(--chat-warning);
+  }
+  &--info {
+    background: tint(var(--pf-color-accent), 10%);
+    color: var(--pf-color-accent);
+  }
+  &--success {
+    background: tint(var(--chat-success), 10%);
+    color: var(--chat-success);
+  }
+  &--error {
+    background: tint(var(--chat-error), 10%);
+    color: var(--chat-error);
+  }
+  // Cold-preview card is not a "status" — it's a confirm dialog wrapper, so
+  // it uses a softer accent surface with a visible border.
+  &--cold-preview {
+    background: tint(var(--pf-color-accent), 6%);
+    border: 1px solid tint(var(--pf-color-accent), 25%);
+  }
+}
+
+.ai-story-cold-preview-title {
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--pf-color-accent);
+}
+
+.ai-story-cold-preview-metrics {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.ai-story-cold-preview-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-story-hint {
+  font-size: 12px;
+  color: var(--chat-text-muted);
+  margin-bottom: 12px;
+}
+
+.ai-story-estimate-metric {
+  &-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--pf-color-accent);
+  }
+  &-label {
+    font-size: 12px;
+    color: var(--chat-text-secondary);
+  }
+}
+
+// Action buttons inside Story view. Primary is solid slate-blue, secondary is
+// a muted ghost, and the two "ghost" variants are link-like cancel/retry
+// affordances that tint on hover.
+.ai-story-btn-primary {
+  padding: 10px 24px;
+  font-size: 15px;
+  cursor: pointer;
+  background: var(--chat-solid-primary);
+  color: var(--chat-user-text);
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.ai-story-btn-secondary {
+  padding: 10px 16px;
+  font-size: 15px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--chat-text-secondary);
+  border: 1px solid var(--chat-border);
+  border-radius: 8px;
+}
+
+.ai-story-btn-ghost-danger {
+  margin-top: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--chat-error);
+  border: 1px solid tint(var(--chat-error), 40%);
+  border-radius: 6px;
+}
+
+.ai-story-btn-retry {
+  margin-top: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--chat-solid-primary);
+  color: var(--chat-user-text);
+  border: none;
+  border-radius: 6px;
+}
+
+.ai-story-btn-ghost-accent {
+  margin-top: 12px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--pf-color-accent);
+  border: 1px solid tint(var(--pf-color-accent), 40%);
+  border-radius: 6px;
+}
+
+// Inline scene table shown after a completed Story analysis. Previously this
+// was rendered with hardcoded dark-slate inline styles (#1e293b / #334155 /
+// #94a3b8 / #e2e8f0) that targeted an imagined dark background, but actually
+// landed on a light-grey surface causing latent contrast issues. This class
+// ties the table to the chat-bg/chat-text tokens so it renders correctly in
+// both light and dark mode.
+.ai-story-scenes-table {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--chat-bg-secondary);
+  overflow-x: auto;
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead tr {
+    border-bottom: 1px solid var(--chat-border);
+  }
+
+  th {
+    padding: 8px 12px;
+    text-align: left;
+    color: var(--chat-text-muted);
+    font-weight: 500;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--chat-border-light);
+    cursor: pointer;
+  }
+
+  td {
+    padding: 6px 12px;
+  }
+
+  .col-index {
+    color: var(--chat-text-secondary);
+  }
+  .col-type,
+  .col-duration {
+    color: var(--chat-text);
+  }
+  .col-duration {
+    font-variant-numeric: tabular-nums;
+  }
+  .col-process {
+    color: var(--chat-text-muted);
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+// Per-scene state chip displayed in the right-most column of the table above.
+.ai-story-scene-state {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+
+  &--completed {
+    background: tint(var(--chat-success), 18%);
+    color: var(--chat-success);
+  }
+  &--failed {
+    background: tint(var(--chat-error), 18%);
+    color: var(--chat-error);
+  }
+  &--pending {
+    background: var(--chat-bg-tertiary);
+    color: var(--chat-text-muted);
+  }
 }

@@ -20,6 +20,7 @@ import m from 'mithril';
 import {PerfettoPlugin} from '../../public/plugin';
 import {Trace} from '../../public/trace';
 import {Intent} from '../../widgets/common';
+import {Icon} from '../../widgets/icon';
 import {AIPanel} from './ai_panel';
 import {
   emitClearChatCommand,
@@ -246,7 +247,7 @@ function renderFloatingPlaceholder(): m.Children {
       `,
       onclick: () => switchFloatingMode('tab'),
     }, [
-      m('span.material-icons', {style: 'font-size: 16px'}, 'open_in_new_off'),
+      m(Icon, {icon: 'open_in_new_off', style: 'font-size: 16px'}),
       m('span', '收回到标签页'),
     ]),
   ]);

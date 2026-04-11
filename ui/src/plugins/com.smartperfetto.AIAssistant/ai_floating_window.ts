@@ -7,12 +7,23 @@
  * draggable, resizable popup window.
  *
  * Why a body-level mount instead of CSS positioning inside the tab:
- * Perfetto's tab system uses a Gate component (display: none) to hide
- * inactive tabs. A `position: fixed` element inside a hidden tab is
- * still hidden by `display: none` on the parent. So if the AIPanel
- * lived inside the tab DOM and the user switched tabs, the floating
- * window would disappear. By living at document.body level, the
- * popup persists across all tab switches.
+ * Perfetto's tab system re-renders tab content on each redraw; the AI
+ * Assistant tab (see index.ts) swaps in a placeholder when mode is
+ * 'floating' so only one AIPanel instance exists at any time. If the
+ * AIPanel lived inside the tab DOM, tab switches would unmount it
+ * along with the floating window. By living at document.body level,
+ * the popup persists across all tab switches.
+ *
+ * Why m.mount (not m.render):
+ * AIPanel's SSE event handlers call m.redraw() to refresh their view,
+ * but m.redraw() only refreshes trees registered via m.mount. An
+ * earlier version of this file used m.render(hostDiv, ...) which does
+ * NOT participate in auto-redraw, so the floating AIPanel would freeze
+ * on its last view() output during an active analysis — state.messages
+ * kept receiving SSE events but the DOM only refreshed on drag / resize
+ * / mode-switch. Mounting a FloatingRoot component via m.mount pulls
+ * the floating tree into Mithril's global redraw system so SSE events
+ * inside AIPanel trigger a repaint here too.
  *
  * State preservation across mode switches:
  * The AIPanel auto-restores recent sessions (<30min) on mount via
@@ -24,6 +35,7 @@
 
 import m from 'mithril';
 import {Trace} from '../../public/trace';
+import {Icon} from '../../widgets/icon';
 import {AIPanel} from './ai_panel';
 import {
   applyFloatingSnapLayout,
@@ -70,7 +82,7 @@ const WINDOW_BASE_SHADOW =
 const STYLES = {
   window: `
     position: fixed;
-    background: white;
+    background: var(--pf-color-background, #ffffff);
     box-shadow: ${WINDOW_BASE_SHADOW};
     border-radius: 10px;
     display: flex;
@@ -79,9 +91,12 @@ const STYLES = {
     z-index: 90;
     font-family: 'Roboto', sans-serif;
   `,
+  // Title bar uses Perfetto's sidebar surface color (deep slate blue) so the
+  // floating window reads as part of Perfetto chrome rather than a third-party
+  // overlay. Fallback hex matches theme_provider.scss --pf-sidebar-surface.
   titlebar: `
-    background: linear-gradient(90deg, #1a73e8 0%, #1557b0 100%);
-    color: white;
+    background: var(--pf-sidebar-surface, #262f3c);
+    color: var(--pf-sidebar-on-surface, #c8c8c8);
     padding: 0 12px;
     height: ${TITLEBAR_HEIGHT}px;
     display: flex;
@@ -103,7 +118,7 @@ const STYLES = {
   `,
   iconBtn: `
     background: ${BTN_BG_IDLE};
-    color: white;
+    color: var(--pf-sidebar-on-surface, #c8c8c8);
     border: none;
     border-radius: 4px;
     padding: 4px 8px;
@@ -118,7 +133,7 @@ const STYLES = {
     flex: 1;
     overflow: hidden;
     position: relative;
-    background: white;
+    background: var(--pf-color-background, #ffffff);
   `,
   resizeHandle: `
     position: absolute;
@@ -127,7 +142,7 @@ const STYLES = {
     width: ${RESIZE_HANDLE_SIZE}px;
     height: ${RESIZE_HANDLE_SIZE}px;
     cursor: nwse-resize;
-    background: linear-gradient(135deg, transparent 50%, #1a73e8 50%, #1a73e8 70%, transparent 70%);
+    background: linear-gradient(135deg, transparent 50%, var(--pf-color-text-muted, #75797c) 50%, var(--pf-color-text-muted, #75797c) 70%, transparent 70%);
     z-index: 1;
   `,
   // Backdrop is intentionally absent — popup is non-modal so the user
@@ -262,9 +277,9 @@ const LAYOUT_MENU_STYLES = {
     position: absolute;
     top: ${TITLEBAR_HEIGHT + 4}px;
     right: 8px;
-    background: white;
+    background: var(--pf-color-background, #ffffff);
     border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 8px 24px var(--pf-color-box-shadow, rgba(0, 0, 0, 0.2)), 0 0 0 1px var(--pf-color-border, rgba(0, 0, 0, 0.08));
     padding: 6px;
     display: grid;
     grid-template-columns: repeat(2, 1fr);
@@ -275,13 +290,13 @@ const LAYOUT_MENU_STYLES = {
   menuItem: `
     ${LAYOUT_MENU_ITEM_BASE}
     background: transparent;
-    color: #202124;
+    color: var(--pf-color-text, #333333);
     transition: background 0.1s;
   `,
   menuItemHover: `
     ${LAYOUT_MENU_ITEM_BASE}
-    background: #e8f0fe;
-    color: #1a73e8;
+    background: var(--pf-color-background-secondary, #edf0f1);
+    color: var(--pf-color-primary, #3d5688);
   `,
 } as const;
 
@@ -338,7 +353,7 @@ class FloatingWindow implements m.ClassComponent<FloatingWindowAttrs> {
             (e.currentTarget as HTMLElement).style.background = BTN_BG_IDLE;
           },
         }, [
-          m('span.material-icons', {style: 'font-size: 14px'}, 'dashboard'),
+          m(Icon, {icon: 'dashboard', style: 'font-size: 14px'}),
         ]),
         // Reset geometry — recovery hatch if user somehow lost the window.
         m('button', {
@@ -352,7 +367,7 @@ class FloatingWindow implements m.ClassComponent<FloatingWindowAttrs> {
             (e.currentTarget as HTMLElement).style.background = BTN_BG_IDLE;
           },
         }, [
-          m('span.material-icons', {style: 'font-size: 14px'}, 'restart_alt'),
+          m(Icon, {icon: 'restart_alt', style: 'font-size: 14px'}),
         ]),
         m('button', {
           style: STYLES.iconBtn,
@@ -365,7 +380,7 @@ class FloatingWindow implements m.ClassComponent<FloatingWindowAttrs> {
             (e.currentTarget as HTMLElement).style.background = BTN_BG_IDLE;
           },
         }, [
-          m('span.material-icons', {style: 'font-size: 14px'}, 'close_fullscreen'),
+          m(Icon, {icon: 'close_fullscreen', style: 'font-size: 14px'}),
           m('span', '收回'),
         ]),
       ]),
@@ -390,7 +405,7 @@ class FloatingWindow implements m.ClassComponent<FloatingWindowAttrs> {
             (e.currentTarget as HTMLElement).style.cssText = LAYOUT_MENU_STYLES.menuItem;
           },
         }, [
-          m('span.material-icons', {style: 'font-size: 16px; color: #5f6368'}, opt.icon),
+          m(Icon, {icon: opt.icon, style: 'font-size: 16px; color: var(--pf-color-text-muted, #75797c);'}),
           m('span', opt.label),
         ]),
       )) : null,
@@ -460,20 +475,24 @@ export function locateFloatingWindow(): void {
   if (!host) return;
   const windowEl = host.firstElementChild as HTMLElement | null;
   if (!windowEl) return;
+  // Pulse uses Perfetto primary slate-blue (rgb 61,86,136 = #3d5688) so the
+  // attention animation matches the rest of Perfetto chrome instead of
+  // flashing in google-blue. Keyframes are inside Web Animations API strings
+  // so CSS vars are not resolved here — the rgba literal is intentional.
   windowEl.animate?.(
     [
       {transform: 'scale(1)', boxShadow: WINDOW_BASE_SHADOW},
       {
         transform: 'scale(1.04)',
-        boxShadow: '0 20px 60px rgba(26, 115, 232, 0.55), 0 0 0 4px rgba(26, 115, 232, 0.9)',
+        boxShadow: '0 20px 60px rgba(61, 86, 136, 0.55), 0 0 0 4px rgba(61, 86, 136, 0.9)',
       },
       {
         transform: 'scale(1)',
-        boxShadow: '0 12px 40px rgba(26, 115, 232, 0.35), 0 0 0 2px rgba(26, 115, 232, 0.5)',
+        boxShadow: '0 12px 40px rgba(61, 86, 136, 0.35), 0 0 0 2px rgba(61, 86, 136, 0.5)',
       },
       {
         transform: 'scale(1.02)',
-        boxShadow: '0 16px 50px rgba(26, 115, 232, 0.45), 0 0 0 3px rgba(26, 115, 232, 0.7)',
+        boxShadow: '0 16px 50px rgba(61, 86, 136, 0.45), 0 0 0 3px rgba(61, 86, 136, 0.7)',
       },
       {transform: 'scale(1)', boxShadow: WINDOW_BASE_SHADOW},
     ],
@@ -500,19 +519,28 @@ export function setupFloatingWindow(trace: Trace): FloatingWindowHandle {
   // otherwise create a fresh div and append it to document.body.
   const hostDiv: HTMLElement =
     document.getElementById(HOST_DIV_ID) ?? createHostDiv();
-  // Always start from a clean slate even when reusing an existing host.
-  m.render(hostDiv, null);
+  // Always start from a clean slate — m.mount(el, null) is the official
+  // unmount path and also detaches any prior auto-redraw subscription.
+  m.mount(hostDiv, null);
 
-  function renderHost(): void {
-    if (getFloatingState().mode !== 'floating') {
-      m.render(hostDiv, null);
-      return;
-    }
-    m.render(hostDiv, m(FloatingWindow, {trace}));
-  }
+  // Root component participating in Mithril's global auto-redraw. view()
+  // reads floating mode synchronously each redraw: when mode is 'tab' it
+  // returns null so Mithril unmounts the subtree (AIPanel.onremove fires);
+  // when mode is 'floating' it mounts m(FloatingWindow) which hosts the
+  // real AIPanel. See the file header for why m.mount is required here.
+  const FloatingRoot: m.Component = {
+    view: () => {
+      if (getFloatingState().mode !== 'floating') return null;
+      return m(FloatingWindow, {trace});
+    },
+  };
+  m.mount(hostDiv, FloatingRoot);
 
-  // Re-render when state changes
-  const unsubscribeState = subscribeFloatingState(renderHost);
+  // Subscribe floating state changes → schedule a redraw. Mithril 2.x
+  // already batches multiple m.redraw() calls within a frame via
+  // requestAnimationFrame, so mousemove-driven updateFloatingState bursts
+  // from drag/resize gestures collapse to one redraw per frame.
+  const unsubscribeState = subscribeFloatingState(() => m.redraw());
 
   // Re-render when the viewport resizes — clamp current geometry in case
   // the window is now partially or fully off-screen.
@@ -541,8 +569,8 @@ export function setupFloatingWindow(trace: Trace): FloatingWindowHandle {
   // always visible and always work, so a keyboard shortcut is a net
   // negative here.
 
-  // Initial render
-  renderHost();
+  // No explicit initial render needed — m.mount() triggered FloatingRoot.view()
+  // above, which reads the current floating mode.
 
   return {
     dispose: () => {
@@ -556,7 +584,9 @@ export function setupFloatingWindow(trace: Trace): FloatingWindowHandle {
       }
       // Force mode back to tab so any pending render won't recreate UI
       updateFloatingState({mode: 'tab'});
-      m.render(hostDiv, null);
+      // m.mount(el, null) is Mithril's official unmount path — tears down
+      // the FloatingRoot subscription registered above.
+      m.mount(hostDiv, null);
       if (hostDiv.parentNode) {
         hostDiv.parentNode.removeChild(hostDiv);
       }
