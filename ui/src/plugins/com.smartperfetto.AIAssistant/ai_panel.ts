@@ -17,7 +17,7 @@
 // limitations under the License.
 
 import m from 'mithril';
-import {OllamaService, OpenAIService, BackendProxyService} from './ai_service';
+import {BackendProxyService} from './ai_service';
 import {SettingsModal} from './settings_modal';
 import {SqlResultTable, UserInteraction} from './sql_result_table';
 import {ChartVisualizer} from './chart_visualizer';
@@ -51,6 +51,7 @@ import {
   PinnedResult,
   AISettings,
   AISession,
+  ServerStatus,
   createStreamingFlowState,
   createStreamingAnswerState,
   createStoryPanelState,
@@ -105,22 +106,22 @@ const DEBUG_AI_PANEL = false;
 // `info` entry doubles as the default for unknown status values.
 const METRIC_STATUS_STYLES: Record<string, {bg: string; fg: string; icon: string}> = {
   good: {
-    bg: 'color-mix(in srgb, var(--chat-success) 12%, transparent)',
+    bg: 'var(--chat-metric-bg-good)',
     fg: 'var(--chat-success)',
     icon: 'check_circle',
   },
   warning: {
-    bg: 'color-mix(in srgb, var(--chat-warning) 12%, transparent)',
+    bg: 'var(--chat-metric-bg-warning)',
     fg: 'var(--chat-warning)',
     icon: 'warning',
   },
   critical: {
-    bg: 'color-mix(in srgb, var(--chat-error) 12%, transparent)',
+    bg: 'var(--chat-metric-bg-critical)',
     fg: 'var(--chat-error)',
     icon: 'error',
   },
   info: {
-    bg: 'color-mix(in srgb, var(--pf-color-accent) 12%, transparent)',
+    bg: 'var(--chat-metric-bg-info)',
     fg: 'var(--pf-color-accent)',
     icon: 'analytics',
   },
@@ -136,10 +137,10 @@ export interface AIPanelAttrs {
 }
 
 // Re-export types for backward compatibility with external consumers
-export {Message, SqlQueryResult, AISettings, AISession, PinnedResult} from './types';
+export {Message, SqlQueryResult, AISettings, AISession, PinnedResult, ServerStatus} from './types';
 
-// All styles are now in styles.scss using CSS classes
-// Removed inline STYLES, THEME, ANIMATIONS objects for better maintainability
+// Inline style objects cannot resolve CSS custom properties for dark mode;
+// all visual tokens live in styles.scss so the --chat-* cascade handles theming.
 
 /** Detect system dark mode preference. Updates reactively when user toggles OS theme. */
 function detectDarkMode(): boolean {
@@ -857,8 +858,10 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
       setTimeout(() => this.sendMessage(), 0);
     }
 
-    const providerLabel = this.state.settings.provider.charAt(0).toUpperCase() + this.state.settings.provider.slice(1);
-    const isConnected = this.state.aiService !== null;
+    const providerLabel = this.serverStatus.connected
+      ? (this.serverStatus.runtime === 'agentv3' ? 'Claude Agent' : 'Legacy Agent')
+      : 'Backend';
+    const isConnected = this.serverStatus.connected;
     // Check backend availability: engine in HTTP_RPC mode, OR backend upload completed/in-progress
     // With non-blocking upload, WASM engine is used for UI while backend runs separately
     const engineInRpcMode = this.engine?.mode === 'HTTP_RPC';
@@ -881,7 +884,8 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
               settings: this.state.settings,
               onClose: () => this.closeSettings(),
               onSave: (newSettings: AISettings) => this.saveSettings(newSettings),
-              onTest: () => this.testConnection(),
+              onCheckStatus: (url: string, key: string) => this.checkServerStatus(url, key),
+              initialStatus: this.serverStatus.connected ? this.serverStatus : undefined,
             })
           : null,
 
@@ -2025,25 +2029,55 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
   }
 
   private initAIService() {
-    const {provider, ollamaUrl, ollamaModel, openaiUrl, openaiModel, openaiApiKey, deepseekModel, backendUrl} =
-      this.state.settings;
+    const {backendUrl} = this.state.settings;
+    // All AI requests go through the backend (agentv3 architecture).
+    // The backend handles provider/model selection via its .env config.
+    this.state.aiService = new BackendProxyService(backendUrl, 'default');
+    // Refresh server status on init (non-blocking)
+    this.refreshServerStatus();
+  }
 
-    if (provider === 'ollama') {
-      this.state.aiService = new OllamaService(ollamaUrl, ollamaModel);
-    } else if (provider === 'openai') {
-      this.state.aiService = new OpenAIService(openaiUrl, openaiModel, openaiApiKey);
-    } else {
-      // Default to deepseek (backend proxy) for any other provider value
-      // This includes 'deepseek' and any unexpected/corrupted values
-      this.state.aiService = new BackendProxyService(backendUrl, deepseekModel || 'deepseek-chat');
+  /** Server status cache — shared by header, settings modal, and welcome message. */
+  private serverStatus: ServerStatus = {connected: false};
+
+  /**
+   * Check backend server status by calling /health with optional auth headers.
+   * Used by SettingsModal to test with potentially unsaved URL/key values.
+   */
+  private async checkServerStatus(backendUrl: string, apiKey: string): Promise<ServerStatus> {
+    try {
+      const headers: Record<string, string> = {};
+      const trimmedKey = (apiKey || '').trim();
+      if (trimmedKey) {
+        headers['x-api-key'] = trimmedKey;
+        headers['Authorization'] = `Bearer ${trimmedKey}`;
+      }
+      const response = await fetch(`${backendUrl.replace(/\/+$/, '')}/health`, {headers});
+      if (!response.ok) return {connected: false};
+      const data = await response.json();
+      return {
+        connected: true,
+        runtime: data.aiEngine?.runtime,
+        model: data.aiEngine?.model,
+        configured: data.aiEngine?.configured,
+        environment: data.environment,
+        authRequired: data.aiEngine?.authRequired,
+      };
+    } catch {
+      return {connected: false};
     }
   }
 
-  private async testConnection(): Promise<boolean> {
-    if (this.state.aiService) {
-      return this.state.aiService.testConnection();
-    }
-    return false;
+  /**
+   * Refresh the cached server status using current saved settings.
+   * Non-blocking — called on init and after settings save.
+   */
+  private refreshServerStatus(): void {
+    const {backendUrl, backendApiKey} = this.state.settings;
+    this.checkServerStatus(backendUrl, backendApiKey || '').then((status) => {
+      this.serverStatus = status;
+      m.redraw();
+    });
   }
 
   private getWelcomeMessage(): string {
@@ -2068,9 +2102,9 @@ I can help you analyze Perfetto traces. Here are some things you can ask:
 * \`/clear\` - Clear chat history
 * \`/help\` - Show this help
 
-**Current AI Provider:** ${this.state.settings.provider.toUpperCase()}
+**Backend:** ${this.state.settings.backendUrl}
 
-Click ⚙️ to change settings.`;
+Click ⚙️ to configure backend connection.`;
   }
 
   private handleKeyDown(e: KeyboardEvent) {
@@ -2690,7 +2724,7 @@ Output MUST follow this exact markdown structure:
         this.addMessage({
           id: this.generateId(),
           role: 'assistant',
-          content: `**Selected Slice:**\n\`\`\`\n${sliceInfo}\n\`\`\`\n\nConfigure an AI service in settings (⚙️) to get AI-powered analysis.`,
+          content: `**Selected Slice:**\n\`\`\`\n${sliceInfo}\n\`\`\`\n\nCheck backend connection in settings (⚙️) to enable AI-powered analysis.`,
           timestamp: Date.now(),
         });
       }

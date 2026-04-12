@@ -342,6 +342,10 @@ export interface PinnedResult {
 
 /**
  * AI service provider settings.
+ * NOTE: Legacy fields (provider, ollama*, openai*, deepseek*) are kept for
+ * backward compatibility with existing localStorage data. The primary runtime
+ * is agentv3 (Claude Agent SDK) — AI model/provider is configured server-side
+ * via backend/.env. The frontend only needs backendUrl and backendApiKey.
  */
 export interface AISettings {
   provider: 'ollama' | 'openai' | 'deepseek';
@@ -354,6 +358,18 @@ export interface AISettings {
   deepseekApiKey: string;
   backendUrl: string;
   backendApiKey: string;
+}
+
+/**
+ * Server status returned from backend /health endpoint.
+ */
+export interface ServerStatus {
+  connected: boolean;
+  runtime?: 'agentv3' | 'agentv2';
+  model?: string;
+  configured?: boolean;
+  environment?: string;
+  authRequired?: boolean;
 }
 
 /**

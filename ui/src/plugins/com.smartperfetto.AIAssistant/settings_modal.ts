@@ -17,13 +17,14 @@
 // limitations under the License.
 
 import m from 'mithril';
-import type {AISettings} from './ai_panel';
+import type {AISettings, ServerStatus} from './types';
 
 export interface SettingsModalAttrs {
   settings: AISettings;
   onClose: () => void;
   onSave: (settings: AISettings) => void;
-  onTest: () => Promise<boolean>;
+  onCheckStatus: (backendUrl: string, apiKey: string) => Promise<ServerStatus>;
+  initialStatus?: ServerStatus;
 }
 
 // Modern color scheme
@@ -124,48 +125,6 @@ const MODAL_STYLES = {
     textTransform: 'uppercase' as const,
     letterSpacing: '0.8px',
   },
-  radioGroup: {
-    display: 'grid' as const,
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: '12px',
-  },
-  radioCard: {
-    position: 'relative' as const,
-    border: '2px solid var(--chat-border)',
-    borderRadius: '10px',
-    padding: '14px 12px',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    background: 'var(--chat-bg)',
-  },
-  radioCardSelected: {
-    borderColor: COLORS.primary,
-    background: COLORS.primaryLight,
-  },
-  radioCardHover: {
-    borderColor: 'var(--border-hover)',
-  },
-  radioInput: {
-    position: 'absolute' as const,
-    opacity: 0,
-    pointerEvents: 'none' as const,
-  },
-  radioIcon: {
-    fontSize: '24px',
-    marginBottom: '8px',
-    display: 'block' as const,
-  },
-  radioTitle: {
-    fontSize: '14px',
-    fontWeight: 600,
-    color: 'var(--chat-text)',
-    marginBottom: '4px',
-  },
-  radioDescription: {
-    fontSize: '12px',
-    color: 'var(--chat-text-secondary)',
-    lineHeight: '1.4',
-  },
   field: {
     marginBottom: '20px',
   },
@@ -193,27 +152,6 @@ const MODAL_STYLES = {
     transition: 'all 0.15s ease',
     fontFamily: 'inherit',
   },
-  inputFocus: {
-    borderColor: COLORS.primary,
-    outline: 'none',
-    boxShadow: `0 0 0 3px ${COLORS.primaryLight}`,
-  },
-  select: {
-    width: '100%',
-    padding: '11px 14px',
-    border: '1px solid var(--chat-border)',
-    borderRadius: '8px',
-    backgroundColor: 'var(--chat-bg-secondary)',
-    color: 'var(--chat-text)',
-    fontSize: '14px',
-    cursor: 'pointer',
-    transition: 'all 0.15s ease',
-    appearance: 'none',
-    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
-    backgroundRepeat: 'no-repeat',
-    backgroundPosition: 'calc(100% - 12px) center',
-    paddingRight: '36px',
-  },
   hint: {
     fontSize: '12px',
     color: 'var(--chat-text-secondary)',
@@ -238,16 +176,11 @@ const MODAL_STYLES = {
     border: `1px solid ${COLORS.warning}40`,
     color: COLORS.warning,
   },
-  alertError: {
-    background: COLORS.errorLight,
-    border: `1px solid ${COLORS.error}40`,
-    color: COLORS.error,
-  },
   alertIcon: {
     fontSize: '16px',
     flexShrink: 0,
   },
-  testBtn: {
+  statusBtn: {
     display: 'inline-flex' as const,
     alignItems: 'center' as const,
     gap: '6px',
@@ -261,26 +194,47 @@ const MODAL_STYLES = {
     fontWeight: 500,
     transition: 'all 0.15s ease',
   },
-  testBtnDisabled: {
+  statusBtnDisabled: {
     opacity: 0.6,
     cursor: 'not-allowed',
   },
-  testResult: {
+  statusCard: {
+    marginTop: '14px',
+    padding: '16px',
+    borderRadius: '10px',
+    border: '1px solid var(--chat-border)',
+    backgroundColor: 'var(--chat-bg-secondary)',
+  },
+  statusRow: {
+    display: 'flex' as const,
+    justifyContent: 'space-between' as const,
+    alignItems: 'center' as const,
+    padding: '6px 0',
+    fontSize: '13px',
+  },
+  statusLabel: {
+    color: 'var(--chat-text-secondary)',
+    fontWeight: 500,
+  },
+  statusValue: {
+    color: 'var(--chat-text)',
+    fontWeight: 600,
+  },
+  statusDot: {
+    display: 'inline-block',
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    marginRight: '6px',
+  },
+  statusHeaderRow: {
     display: 'flex' as const,
     alignItems: 'center' as const,
-    gap: '6px',
-    fontSize: '13px',
-    fontWeight: 500,
-    padding: '8px 14px',
-    borderRadius: '6px',
+    gap: '8px',
   },
-  testSuccess: {
-    background: COLORS.successLight,
-    color: COLORS.success,
-  },
-  testError: {
-    background: COLORS.errorLight,
-    color: COLORS.error,
+  statusHeaderText: {
+    fontWeight: 600,
+    fontSize: '14px',
   },
   footer: {
     display: 'flex' as const,
@@ -311,49 +265,91 @@ const MODAL_STYLES = {
     backgroundColor: COLORS.primary,
     color: 'white',
   },
-  btnPrimaryHover: {
-    backgroundColor: COLORS.primaryHover,
-  },
 };
 
 export class SettingsModal implements m.ClassComponent<SettingsModalAttrs> {
   private settings!: AISettings;
-  private isTesting = false;
-  private testResult: boolean | null = null;
-  private availableModels: string[] = [];
-  private isLoadingModels = false;
+  private isChecking = false;
+  private serverStatus: ServerStatus | null = null;
+  private onCheckStatus!: SettingsModalAttrs['onCheckStatus'];
 
   oninit(vnode: m.Vnode<SettingsModalAttrs>) {
     this.settings = {...vnode.attrs.settings};
-    this.loadAvailableModels();
+    this.onCheckStatus = vnode.attrs.onCheckStatus;
+    this.serverStatus = vnode.attrs.initialStatus ?? null;
   }
 
-  async loadAvailableModels() {
-    if (this.settings.provider === 'ollama') {
-      this.isLoadingModels = true;
-      m.redraw();
-      try {
-        const response = await fetch(`${this.settings.ollamaUrl}/api/tags`);
-        if (response.ok) {
-          const data = await response.json();
-          this.availableModels = data.models?.map((m: any) => m.name) || [];
-        }
-      } catch {
-        // Ignore errors - will show hardcoded options as fallback
-      } finally {
-        this.isLoadingModels = false;
-        m.redraw();
-      }
+  private async checkStatus() {
+    this.isChecking = true;
+    this.serverStatus = null;
+    m.redraw();
+
+    this.serverStatus = await this.onCheckStatus(
+      this.settings.backendUrl,
+      this.settings.backendApiKey || '',
+    );
+    this.isChecking = false;
+    m.redraw();
+  }
+
+  private renderStatusCard(): m.Children {
+    const status = this.serverStatus;
+    if (!status) return null;
+
+    if (!status.connected) {
+      return m('div', {style: MODAL_STYLES.statusCard}, [
+        m('div', {style: {...MODAL_STYLES.statusHeaderRow, color: COLORS.error}}, [
+          m('span', {style: {...MODAL_STYLES.statusDot, backgroundColor: COLORS.error}}),
+          m('span', {style: MODAL_STYLES.statusHeaderText}, 'Connection Failed'),
+        ]),
+        m('div', {style: {...MODAL_STYLES.hint, marginTop: '8px', lineHeight: '1.5'}},
+          'Cannot reach backend. Make sure the backend is running and the URL is correct.'),
+      ]);
     }
+
+    const runtimeLabel = status.runtime === 'agentv3'
+      ? 'Claude Agent SDK (agentv3)'
+      : status.runtime === 'agentv2'
+        ? 'Legacy Agent (agentv2)'
+        : 'Unknown';
+
+    return m('div', {style: MODAL_STYLES.statusCard}, [
+      m('div', {style: {...MODAL_STYLES.statusHeaderRow, color: COLORS.success, marginBottom: '12px'}}, [
+        m('span', {style: {...MODAL_STYLES.statusDot, backgroundColor: COLORS.success}}),
+        m('span', {style: MODAL_STYLES.statusHeaderText}, 'Connected'),
+      ]),
+      m('div', {style: MODAL_STYLES.statusRow}, [
+        m('span', {style: MODAL_STYLES.statusLabel}, 'Engine'),
+        m('span', {style: MODAL_STYLES.statusValue}, runtimeLabel),
+      ]),
+      status.model
+        ? m('div', {style: MODAL_STYLES.statusRow}, [
+            m('span', {style: MODAL_STYLES.statusLabel}, 'Model'),
+            m('span', {style: {...MODAL_STYLES.statusValue, fontFamily: 'monospace', fontSize: '12px'}}, status.model),
+          ])
+        : null,
+      m('div', {style: MODAL_STYLES.statusRow}, [
+        m('span', {style: MODAL_STYLES.statusLabel}, 'AI Ready'),
+        m('span', {style: {...MODAL_STYLES.statusValue, color: status.configured ? COLORS.success : COLORS.error}},
+          status.configured ? 'Yes' : 'No (API key missing)'),
+      ]),
+      status.environment
+        ? m('div', {style: MODAL_STYLES.statusRow}, [
+            m('span', {style: MODAL_STYLES.statusLabel}, 'Environment'),
+            m('span', {style: MODAL_STYLES.statusValue}, status.environment),
+          ])
+        : null,
+      // Auth warning
+      status.authRequired
+        ? m('div', {style: {...MODAL_STYLES.alertBox, ...MODAL_STYLES.alertWarning, marginTop: '12px'}}, [
+            m('span', {style: MODAL_STYLES.alertIcon}, '!'),
+            m('div', 'Backend requires API key authentication (SMARTPERFETTO_API_KEY). Make sure the API Key field above is correctly configured.'),
+          ])
+        : null,
+    ]);
   }
 
   view(vnode: m.Vnode<SettingsModalAttrs>) {
-    const modelOptions = this.availableModels.length > 0
-      ? this.availableModels.map((model) =>
-          m('option', {value: model}, model)
-        )
-      : [m('option', {value: ''}, 'No models found - check endpoint')];
-
     return m(
       'div',
       {style: MODAL_STYLES.overlay},
@@ -377,79 +373,8 @@ export class SettingsModal implements m.ClassComponent<SettingsModalAttrs> {
           ]),
 
           m('div', {style: MODAL_STYLES.content}, [
-            // Provider Selection
             m('div', {style: MODAL_STYLES.section}, [
-              m('h4', {style: MODAL_STYLES.sectionTitle}, 'AI Provider'),
-              m('div', {style: MODAL_STYLES.radioGroup}, [
-                // DeepSeek Card
-                m('label', {
-                  style: {
-                    ...MODAL_STYLES.radioCard,
-                    ...(this.settings.provider === 'deepseek' ? MODAL_STYLES.radioCardSelected : {}),
-                  },
-                }, [
-                  m('input[type=radio]', {
-                    style: MODAL_STYLES.radioInput,
-                    name: 'provider',
-                    value: 'deepseek',
-                    checked: this.settings.provider === 'deepseek',
-                    onchange: () => {
-                      this.settings.provider = 'deepseek';
-                    },
-                  }),
-                  m('span', {style: MODAL_STYLES.radioIcon}, '🚀'),
-                  m('div', {style: MODAL_STYLES.radioTitle}, 'DeepSeek AI'),
-                  m('div', {style: MODAL_STYLES.radioDescription}, 'Fast & cost-effective'),
-                ]),
-
-                // Ollama Card
-                m('label', {
-                  style: {
-                    ...MODAL_STYLES.radioCard,
-                    ...(this.settings.provider === 'ollama' ? MODAL_STYLES.radioCardSelected : {}),
-                  },
-                }, [
-                  m('input[type=radio]', {
-                    style: MODAL_STYLES.radioInput,
-                    name: 'provider',
-                    value: 'ollama',
-                    checked: this.settings.provider === 'ollama',
-                    onchange: () => {
-                      this.settings.provider = 'ollama';
-                      this.loadAvailableModels();
-                    },
-                  }),
-                  m('span', {style: MODAL_STYLES.radioIcon}, '🏠'),
-                  m('div', {style: MODAL_STYLES.radioTitle}, 'Local AI'),
-                  m('div', {style: MODAL_STYLES.radioDescription}, 'Runs on your machine'),
-                ]),
-
-                // OpenAI Card
-                m('label', {
-                  style: {
-                    ...MODAL_STYLES.radioCard,
-                    ...(this.settings.provider === 'openai' ? MODAL_STYLES.radioCardSelected : {}),
-                  },
-                }, [
-                  m('input[type=radio]', {
-                    style: MODAL_STYLES.radioInput,
-                    name: 'provider',
-                    value: 'openai',
-                    checked: this.settings.provider === 'openai',
-                    onchange: () => {
-                      this.settings.provider = 'openai';
-                    },
-                  }),
-                  m('span', {style: MODAL_STYLES.radioIcon}, '🔌'),
-                  m('div', {style: MODAL_STYLES.radioTitle}, 'OpenAI'),
-                  m('div', {style: MODAL_STYLES.radioDescription}, 'GPT-4 & compatible APIs'),
-                ]),
-              ]),
-            ]),
-
-            // Backend Configuration
-            m('div', {style: MODAL_STYLES.section}, [
-              m('h4', {style: MODAL_STYLES.sectionTitle}, 'Backend Configuration'),
+              m('h4', {style: MODAL_STYLES.sectionTitle}, 'Backend Connection'),
               m('div', {style: MODAL_STYLES.field}, [
                 m('label', {style: MODAL_STYLES.fieldLabel}, [
                   m('span', {style: MODAL_STYLES.fieldIcon}, '🖥️'),
@@ -467,7 +392,7 @@ export class SettingsModal implements m.ClassComponent<SettingsModalAttrs> {
               m('div', {style: MODAL_STYLES.field}, [
                 m('label', {style: MODAL_STYLES.fieldLabel}, [
                   m('span', {style: MODAL_STYLES.fieldIcon}, '🔐'),
-                  'Backend API Key',
+                  'API Key',
                 ]),
                 m('input[type=password]', {
                   style: MODAL_STYLES.input,
@@ -477,206 +402,41 @@ export class SettingsModal implements m.ClassComponent<SettingsModalAttrs> {
                   },
                   placeholder: 'Optional: SMARTPERFETTO_API_KEY',
                 }),
+                m('div', {style: MODAL_STYLES.hint}, 'Required only if backend has SMARTPERFETTO_API_KEY configured.'),
               ]),
             ]),
 
-            // Ollama Configuration
-            this.settings.provider === 'ollama'
-              ? m('div', {style: MODAL_STYLES.section}, [
-                  m('h4', {style: MODAL_STYLES.sectionTitle}, 'Ollama Configuration'),
-                  m('div', {style: {...MODAL_STYLES.alertBox, ...MODAL_STYLES.alertWarning}}, [
-                    m('span', {style: MODAL_STYLES.alertIcon}, '⚠️'),
-                    m('div', [
-                      m('strong', {}, 'CORS Required: '),
-                      m('span', {}, 'Ollama must be started with OLLAMA_ORIGINS="*"'),
-                      m('br'),
-                      m('code', {style: {background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px'}}, 'OLLAMA_ORIGINS="*" ollama serve'),
-                    ]),
-                  ]),
-                  m('div', {style: MODAL_STYLES.field}, [
-                    m('label', {style: MODAL_STYLES.fieldLabel}, [
-                      m('span', {style: MODAL_STYLES.fieldIcon}, '🔗'),
-                      'Endpoint',
-                    ]),
-                    m('input[type=text]', {
-                      style: MODAL_STYLES.input,
-                      value: this.settings.ollamaUrl,
-                      onchange: (e: Event) => {
-                        this.settings.ollamaUrl = (e.target as HTMLInputElement).value;
-                      },
-                      placeholder: 'http://localhost:11434',
-                    }),
-                  ]),
-                  m('div', {style: MODAL_STYLES.field}, [
-                    m('label', {style: MODAL_STYLES.fieldLabel}, [
-                      m('span', {style: MODAL_STYLES.fieldIcon}, '📦'),
-                      'Model',
-                    ]),
-                    this.isLoadingModels
-                      ? m('div', {style: {...MODAL_STYLES.hint, display: 'flex', alignItems: 'center', gap: '6px'}}, [
-                          m('span', {style: {animation: 'spin 1s linear infinite'}}, '⏳'),
-                          'Loading models...',
-                        ])
-                      : m(
-                          'select',
-                          {
-                            style: MODAL_STYLES.select,
-                            value: this.settings.ollamaModel,
-                            onchange: (e: Event) => {
-                              this.settings.ollamaModel = (e.target as HTMLSelectElement).value;
-                            },
-                          },
-                          modelOptions
-                        ),
-                    this.availableModels.length === 0 && !this.isLoadingModels
-                      ? m('div', {style: {...MODAL_STYLES.hint, color: COLORS.error}}, 'Could not fetch models. Make sure Ollama is running with CORS enabled.')
-                      : null,
-                  ]),
-                ])
-              : null,
-
-            // OpenAI Configuration
-            this.settings.provider === 'openai'
-              ? m('div', {style: MODAL_STYLES.section}, [
-                  m('h4', {style: MODAL_STYLES.sectionTitle}, 'OpenAI Configuration'),
-                  m('div', {style: MODAL_STYLES.field}, [
-                    m('label', {style: MODAL_STYLES.fieldLabel}, [
-                      m('span', {style: MODAL_STYLES.fieldIcon}, '🔗'),
-                      'API Endpoint',
-                    ]),
-                    m('input[type=text]', {
-                      style: MODAL_STYLES.input,
-                      value: this.settings.openaiUrl,
-                      onchange: (e: Event) => {
-                        this.settings.openaiUrl = (e.target as HTMLInputElement).value;
-                      },
-                      placeholder: 'https://api.openai.com/v1',
-                    }),
-                  ]),
-                  m('div', {style: MODAL_STYLES.field}, [
-                    m('label', {style: MODAL_STYLES.fieldLabel}, [
-                      m('span', {style: MODAL_STYLES.fieldIcon}, '🤖'),
-                      'Model',
-                    ]),
-                    m('input[type=text]', {
-                      style: MODAL_STYLES.input,
-                      value: this.settings.openaiModel,
-                      onchange: (e: Event) => {
-                        this.settings.openaiModel = (e.target as HTMLInputElement).value;
-                      },
-                      placeholder: 'gpt-4o',
-                    }),
-                  ]),
-                  m('div', {style: MODAL_STYLES.field}, [
-                    m('label', {style: MODAL_STYLES.fieldLabel}, [
-                      m('span', {style: MODAL_STYLES.fieldIcon}, '🔑'),
-                      'API Key',
-                    ]),
-                    m('input[type=password]', {
-                      style: MODAL_STYLES.input,
-                      value: this.settings.openaiApiKey,
-                      onchange: (e: Event) => {
-                        this.settings.openaiApiKey = (e.target as HTMLInputElement).value;
-                      },
-                      placeholder: 'sk-...',
-                    }),
-                  ]),
-                ])
-              : null,
-
-            // DeepSeek Configuration
-            this.settings.provider === 'deepseek'
-              ? m('div', {style: MODAL_STYLES.section}, [
-                  m('h4', {style: MODAL_STYLES.sectionTitle}, 'DeepSeek Configuration'),
-                  m('div', {style: {...MODAL_STYLES.alertBox, ...MODAL_STYLES.alertInfo}}, [
-                    m('span', {style: MODAL_STYLES.alertIcon}, 'ℹ️'),
-                    m('div', [
-                      m('strong', {}, 'DeepSeek AI: '),
-                      m('span', {}, 'Fast and cost-effective AI service for trace analysis.'),
-                      m('br'),
-                      m('span', {style: {fontSize: '12px'}}, 'Get your API key at '),
-                      m('a', {
-                        href: 'https://platform.deepseek.com',
-                        target: '_blank',
-                        style: {color: COLORS.primary, textDecoration: 'none'},
-                      }, 'platform.deepseek.com'),
-                    ]),
-                  ]),
-                  m('div', {style: MODAL_STYLES.field}, [
-                    m('label', {style: MODAL_STYLES.fieldLabel}, [
-                      m('span', {style: MODAL_STYLES.fieldIcon}, '🤖'),
-                      'Model',
-                    ]),
-                    m('select', {
-                      style: MODAL_STYLES.select,
-                      value: (this.settings as any).deepseekModel || 'deepseek-chat',
-                      onchange: (e: Event) => {
-                        (this.settings as any).deepseekModel = (e.target as HTMLSelectElement).value;
-                      },
-                    }, [
-                      m('option', {value: 'deepseek-chat'}, 'deepseek-chat (V3 - General)'),
-                      m('option', {value: 'deepseek-coder'}, 'deepseek-coder (Code Specialized)'),
-                    ]),
-                  ]),
-                  m('div', {style: MODAL_STYLES.field}, [
-                    m('label', {style: MODAL_STYLES.fieldLabel}, [
-                      m('span', {style: MODAL_STYLES.fieldIcon}, '🔑'),
-                      'API Key',
-                    ]),
-                    m('input[type=password]', {
-                      style: MODAL_STYLES.input,
-                      value: (this.settings as any).deepseekApiKey || '',
-                      onchange: (e: Event) => {
-                        (this.settings as any).deepseekApiKey = (e.target as HTMLInputElement).value;
-                      },
-                      placeholder: 'sk-xxxxxxxxxxxxxxxxxxxxxxxx',
-                    }),
-                  ]),
-                ])
-              : null,
-
-
-            // Test Connection
             m('div', {style: MODAL_STYLES.section}, [
+              m('h4', {style: MODAL_STYLES.sectionTitle}, 'Server Status'),
               m('div', {style: {display: 'flex', alignItems: 'center', gap: '12px'}}, [
                 m(
                   'button',
                   {
                     style: {
-                      ...MODAL_STYLES.testBtn,
-                      ...(this.isTesting ? MODAL_STYLES.testBtnDisabled : {}),
+                      ...MODAL_STYLES.statusBtn,
+                      ...(this.isChecking ? MODAL_STYLES.statusBtnDisabled : {}),
                     },
-                    onclick: async () => {
-                      this.isTesting = true;
-                      this.testResult = null;
-                      m.redraw();
-
-                      const result = await vnode.attrs.onTest();
-                      this.testResult = result;
-                      this.isTesting = false;
-                      m.redraw();
-                    },
-                    disabled: this.isTesting,
+                    onclick: () => this.checkStatus(),
+                    disabled: this.isChecking,
                   },
-                  this.isTesting ? '⏳ Testing...' : '🔌 Test Connection'
+                  this.isChecking ? '⏳ Checking...' : '🔌 Check Status'
                 ),
-                this.testResult === true
-                  ? m('div', {style: {...MODAL_STYLES.testResult, ...MODAL_STYLES.testSuccess}}, [
-                      m('span', '✓'),
-                      m('span', 'Connection successful!'),
-                    ])
-                  : null,
-                this.testResult === false
-                  ? m('div', {style: {...MODAL_STYLES.testResult, ...MODAL_STYLES.testError}}, [
-                      m('span', '✗'),
-                      m('span', 'Connection failed. Check your settings.'),
-                    ])
-                  : null,
+              ]),
+              this.renderStatusCard(),
+            ]),
+
+            m('div', {style: {...MODAL_STYLES.alertBox, ...MODAL_STYLES.alertInfo}}, [
+              m('span', {style: MODAL_STYLES.alertIcon}, 'ℹ️'),
+              m('div', [
+                m('span', 'AI model and provider are configured server-side via '),
+                m('code', {style: {background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px'}}, 'backend/.env'),
+                m('span', '. See '),
+                m('code', {style: {background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px'}}, '.env.example'),
+                m('span', ' for all available options.'),
               ]),
             ]),
           ]),
 
-          // Footer
           m('div', {style: MODAL_STYLES.footer}, [
             m(
               'button',
