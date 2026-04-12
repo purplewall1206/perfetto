@@ -290,7 +290,7 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
 
     // Panel styles - using CSS custom properties for dark mode support
     const panelStyle: Record<string, string> = {
-      background: 'var(--background, white)',
+      background: 'var(--chat-bg)',
       borderRadius: '12px',
       boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
       padding: '20px',
@@ -413,7 +413,7 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
             border: '1px solid var(--chat-border)',
             fontSize: '14px',
             resize: 'vertical',
-            background: 'var(--background, white)',
+            background: 'var(--chat-bg)',
             color: 'var(--chat-text)',
           },
           placeholder: '请输入您的具体需求...',
@@ -432,7 +432,7 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
             padding: '10px 20px',
             borderRadius: '6px',
             border: '1px solid var(--chat-border)',
-            background: 'var(--background, white)',
+            background: 'var(--chat-bg)',
             color: 'var(--chat-text-secondary)',
             cursor: 'pointer',
             fontSize: '14px',

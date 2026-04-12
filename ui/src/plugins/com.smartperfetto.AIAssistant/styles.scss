@@ -110,6 +110,14 @@
   --chat-warning: var(--pf-color-warning);
   --chat-error: var(--pf-color-danger);
 
+  // Metric card status backgrounds — single source of truth for the 12% tint
+  // used by METRIC_STATUS_STYLES in ai_panel.ts. Keeps color-mix expressions
+  // in SCSS (where tint() is available) instead of duplicating them in TS.
+  --chat-metric-bg-good: tint(var(--chat-success), 12%);
+  --chat-metric-bg-warning: tint(var(--chat-warning), 12%);
+  --chat-metric-bg-critical: tint(var(--chat-error), 12%);
+  --chat-metric-bg-info: tint(var(--pf-color-accent), 12%);
+
   --chat-shadow-sm: 0 1px 2px var(--pf-color-box-shadow);
   --chat-shadow-md: 0 4px 12px var(--pf-color-box-shadow);
   --chat-shadow-lg: 0 8px 24px var(--pf-color-box-shadow);
