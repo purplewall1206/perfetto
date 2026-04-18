@@ -327,6 +327,9 @@ export interface AIPanelState {
   // Story Panel state — Chat ↔ Story view switch
   currentView: 'chat' | 'story';
   storyState: StoryPanelState;
+  /** Analysis mode toggle: 'fast' (quick path) / 'full' (pipeline) / 'auto' (classifier-driven).
+   *  Persisted in localStorage under ANALYSIS_MODE_KEY. */
+  analysisMode: 'fast' | 'full' | 'auto';
 }
 
 /**

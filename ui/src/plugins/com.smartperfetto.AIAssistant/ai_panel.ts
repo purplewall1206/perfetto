@@ -206,6 +206,14 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     // Story Panel (Chat ↔ Story view switch)
     currentView: 'chat',
     storyState: createStoryPanelState(),
+    // Analysis mode (persisted in localStorage under 'ai-analysis-mode'; default 'auto')
+    analysisMode: (() => {
+      try {
+        const stored = localStorage.getItem('ai-analysis-mode');
+        if (stored === 'fast' || stored === 'full' || stored === 'auto') return stored;
+      } catch { /* ignore — private browsing or storage quota */ }
+      return 'auto';
+    })(),
   };
 
   private unsubscribeClearChat?: () => void;
@@ -819,6 +827,12 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     if (this.saveSessionTimer) {
       clearTimeout(this.saveSessionTimer);
       this.saveSessionTimer = null;
+    }
+    // Clear throttled scroll-to-bottom timer to prevent firing on
+    // torn-down instance after mode switch or trace unload.
+    if (this.scrollThrottleTimer) {
+      clearTimeout(this.scrollThrottleTimer);
+      this.scrollThrottleTimer = null;
     }
     if (this.unsubscribeClearChat) {
       this.unsubscribeClearChat();
@@ -1595,6 +1609,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                 ? m('div.ai-context-indicator',
                   `第 ${this.state.messages.filter(msg => msg.role === 'user').length} 轮对话 | 会话 ${this.state.agentSessionId.substring(0, 8)}...`)
                 : null,
+              this.renderAnalysisModeChips(),
               m('div.ai-input-wrapper', [
                 m('textarea#ai-input.ai-input', {
                   class: this.state.isLoading || !this.state.aiService || !isInRpcMode ? 'disabled' : '',
@@ -1638,6 +1653,59 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
         ]),  // End of ai-content-wrapper
       ]
     );
+  }
+
+  /** Render the analysis mode selector chips (fast / full / auto).
+   *  Disables 'fast' when a strong context (comparison mode) is active: the lightweight
+   *  MCP registration skips comparison tools and buildQuickSystemPrompt does not consume
+   *  selectionContext, so fast under these contexts would silently drop critical state. */
+  private renderAnalysisModeChips(): m.Vnode {
+    const current = this.state.analysisMode;
+    const fastDisabled = !!this.state.referenceTraceId;
+    const modes = [
+      {id: 'fast', label: '⚡ 快速', title: '5 轮内精简答复，适合简单事实查询'},
+      {id: 'full', label: '🔍 完整', title: '完整多轮分析流水线'},
+      {id: 'auto', label: '🤖 智能', title: '按查询复杂度自动选择'},
+    ] as const;
+    return m('div.ai-mode-chips',
+      modes.map((mode) => {
+        const disabled = mode.id === 'fast' && fastDisabled;
+        const classes = [
+          current === mode.id ? 'active' : '',
+          disabled ? 'disabled' : '',
+        ].filter(Boolean).join(' ');
+        return m('button.ai-mode-chip', {
+          class: classes,
+          title: disabled ? '对比模式下需完整分析才能利用参考 Trace 上下文' : mode.title,
+          disabled,
+          onclick: () => this.onAnalysisModeChange(mode.id),
+        }, mode.label);
+      }),
+    );
+  }
+
+  /** Switch analysis mode. Changing mode mid-session clears agentSessionId so the backend
+   *  starts a fresh SDK session — avoids context mix between the 5-turn quick path and
+   *  30-turn full pipeline (see plan §3, "SDK resume strategy"). */
+  private onAnalysisModeChange(newMode: 'fast' | 'full' | 'auto'): void {
+    if (newMode === this.state.analysisMode) return;
+    const hadSession = !!this.state.agentSessionId;
+    this.state.analysisMode = newMode;
+    try {
+      localStorage.setItem('ai-analysis-mode', newMode);
+    } catch { /* ignore */ }
+    if (hadSession) {
+      this.state.agentSessionId = null;
+      this.clearAgentObservability();
+      const label = {fast: '快速', full: '完整', auto: '智能'}[newMode];
+      this.addMessage({
+        id: this.generateId(),
+        role: 'system',
+        content: `已切换到「${label}」模式，将开始新会话。`,
+        timestamp: Date.now(),
+      });
+    }
+    m.redraw();
   }
 
   private submitFeedback(_messageId: string, rating: 'positive' | 'negative'): void {
@@ -3231,6 +3299,7 @@ Output MUST follow this exact markdown structure:
           confidenceThreshold: 0.5,  // Match backend default
           maxNoProgressRounds: 2,
           maxFailureRounds: 2,
+          analysisMode: this.state.analysisMode,
         },
       };
 
@@ -4742,6 +4811,7 @@ Output MUST follow this exact markdown structure:
 
   private async clearChat() {
     this.cancelSSEConnection();
+    this.setLoadingState(false);
     this.resetInterventionState();
 
     // Persist current conversation before wiping
@@ -4758,6 +4828,10 @@ Output MUST follow this exact markdown structure:
     this.state.pinnedResults = [];  // Clear pinned results
     this.state.agentSessionId = null;  // Clear Agent session for multi-turn dialogue
     this.revealedBlockCounts.clear();
+    this.state.completionHandled = false;
+    this.state.displayedSkillProgress = new Set();
+    this.state.collectedErrors = [];
+    this.state.collapsedTables = new Set();
     this.clearAgentObservability();
     this.resetStreamingFlow();
     this.resetStreamingAnswer();
