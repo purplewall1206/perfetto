@@ -141,6 +141,11 @@ export class NavigationBookmarkBar implements m.ClassComponent<NavigationBookmar
       return null;
     }
 
+    // Clamp stale index if bookmarks list shrank (e.g. after clear + re-analyze).
+    if (this.currentIndex >= bookmarks.length) {
+      this.currentIndex = Math.max(0, bookmarks.length - 1);
+    }
+
     return m('div', {style: STYLES.container}, [
       // 导航控制按钮
       m('div', {style: STYLES.navControls}, [

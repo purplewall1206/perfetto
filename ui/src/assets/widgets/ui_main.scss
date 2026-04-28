@@ -36,5 +36,9 @@
   &__page-container {
     grid-area: page;
     overflow: auto;
+    // Right-rail slot for plugins (e.g. AI Assistant sidebar). Plugins set
+    // --pf-right-rail-width on documentElement; the page area shrinks to make
+    // room while topbar and statusbar stay full-width.
+    margin-right: var(--pf-right-rail-width, 0px);
   }
 }

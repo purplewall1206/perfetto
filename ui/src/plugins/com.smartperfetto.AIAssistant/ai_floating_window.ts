@@ -41,16 +41,19 @@ import {
   applyFloatingSnapLayout,
   clamp,
   clampFloatingGeometryToViewport,
+  clampSidebarWidth,
   FLOATING_SNAP_LAYOUTS,
   FloatingState,
   FLOATING_MIN_HEIGHT,
   FLOATING_MIN_WIDTH,
+  getEffectiveSidebarWidth,
   getFloatingState,
   resetFloatingGeometry,
   SNAP_MARGIN,
   subscribeFloatingState,
   updateFloatingState,
 } from './ai_floating_state';
+import {SidebarPanel} from './ai_sidebar_panel';
 import {switchFloatingMode} from './ai_transient_state';
 
 // ── Layout constants ────────────────────────────────────────────────────
@@ -164,6 +167,14 @@ interface DragGesture {
 let activeGesture: DragGesture | null = null;
 
 /**
+ * Module-level callback to dismiss the snap layout menu when a drag gesture
+ * starts. startGesture() calls stopPropagation() which prevents the window's
+ * onclick dismiss handler from firing, so without this the menu stays orphaned
+ * during and after drag. The FloatingWindow component registers this.
+ */
+let dismissLayoutMenu: (() => void) | null = null;
+
+/**
  * Clamp a candidate position so the window stays grabbable within the
  * current viewport. `width` is the window width (needed because we allow
  * the window to hang off the left edge as long as DRAG_MIN_VISIBLE_X
@@ -231,6 +242,10 @@ function onGestureEnd(): void {
 function startGesture(type: 'drag' | 'resize', e: MouseEvent): void {
   e.preventDefault();
   e.stopPropagation();
+  // Close the snap layout menu if open — drag on titlebar while menu is
+  // open would leave it orphaned because stopPropagation prevents the
+  // window's onclick dismiss handler from firing.
+  if (dismissLayoutMenu) dismissLayoutMenu();
   // Defensive: if a previous gesture leaked (shouldn't happen but be safe),
   // tear it down before starting a new one.
   if (activeGesture !== null) {
@@ -308,6 +323,16 @@ interface FloatingWindowAttrs {
 
 class FloatingWindow implements m.ClassComponent<FloatingWindowAttrs> {
   private showLayoutMenu = false;
+
+  oncreate() {
+    // Register module-level dismiss callback so startGesture() can close
+    // the snap menu even though it calls stopPropagation().
+    dismissLayoutMenu = () => { this.showLayoutMenu = false; };
+  }
+
+  onremove() {
+    if (dismissLayoutMenu) dismissLayoutMenu = null;
+  }
 
   view({attrs}: m.Vnode<FloatingWindowAttrs>): m.Children {
     const s = getFloatingState();
@@ -507,12 +532,34 @@ function createHostDiv(): HTMLDivElement {
   return div;
 }
 
+// ── Right-rail CSS variable (sidebar margin push) ──────────────────────
+// The core layout rule `.pf-ui-main__page-container { margin-right:
+// var(--pf-right-rail-width, 0px) }` responds to this variable. Setting it
+// causes only the page area to shrink — topbar and statusbar stay full-width.
+
+const RIGHT_RAIL_VAR = '--pf-right-rail-width';
+
+function syncRightRailWidth(): void {
+  const s = getFloatingState();
+  if (s.mode === 'sidebar') {
+    const w = getEffectiveSidebarWidth();
+    document.documentElement.style.setProperty(RIGHT_RAIL_VAR, `${w}px`);
+  } else {
+    clearRightRailWidth();
+  }
+}
+
+function clearRightRailWidth(): void {
+  document.documentElement.style.removeProperty(RIGHT_RAIL_VAR);
+}
+
 /**
- * Mount the floating window host on document.body and start its render
- * loop. Call dispose() on trace unload to clean up.
+ * Mount the surface host on document.body and start its render loop.
+ * Call dispose() on trace unload to clean up.
  *
- * The host div always exists in the DOM. Its content is empty when
- * mode === 'tab' and contains the floating window when mode === 'floating'.
+ * The host div always exists in the DOM. Its content switches between
+ * FloatingWindow (mode === 'floating'), SidebarPanel (mode === 'sidebar'),
+ * or null (mode === 'tab'). Only one surface renders at a time.
  */
 export function setupFloatingWindow(trace: Trace): FloatingWindowHandle {
   // Reuse an existing host if a previous trace left one behind (defensive),
@@ -526,32 +573,45 @@ export function setupFloatingWindow(trace: Trace): FloatingWindowHandle {
   // Root component participating in Mithril's global auto-redraw. view()
   // reads floating mode synchronously each redraw: when mode is 'tab' it
   // returns null so Mithril unmounts the subtree (AIPanel.onremove fires);
-  // when mode is 'floating' it mounts m(FloatingWindow) which hosts the
-  // real AIPanel. See the file header for why m.mount is required here.
+  // when mode is 'floating' it mounts FloatingWindow; when 'sidebar' it
+  // mounts SidebarPanel. Only one surface renders at a time — single
+  // AIPanel instance invariant is preserved.
   const FloatingRoot: m.Component = {
     view: () => {
-      if (getFloatingState().mode !== 'floating') return null;
-      return m(FloatingWindow, {trace});
+      const mode = getFloatingState().mode;
+      if (mode === 'floating') return m(FloatingWindow, {trace});
+      if (mode === 'sidebar') return m(SidebarPanel, {trace});
+      return null;
     },
   };
   m.mount(hostDiv, FloatingRoot);
 
-  // Subscribe floating state changes → schedule a redraw. Mithril 2.x
-  // already batches multiple m.redraw() calls within a frame via
-  // requestAnimationFrame, so mousemove-driven updateFloatingState bursts
-  // from drag/resize gestures collapse to one redraw per frame.
-  const unsubscribeState = subscribeFloatingState(() => m.redraw());
+  // Subscribe floating state changes → schedule a redraw AND sync the
+  // right-rail CSS variable so the page container makes room for the
+  // sidebar. Mithril 2.x already batches multiple m.redraw() calls within
+  // a frame via requestAnimationFrame, so mousemove-driven
+  // updateFloatingState bursts from drag/resize gestures collapse to one
+  // redraw per frame.
+  const unsubscribeState = subscribeFloatingState(() => {
+    syncRightRailWidth();
+    m.redraw();
+  });
+  // Run once on setup so the CSS variable is correct for the initial mode.
+  syncRightRailWidth();
 
   // Re-render when the viewport resizes — clamp current geometry in case
-  // the window is now partially or fully off-screen.
+  // the window is now partially or fully off-screen, or sidebar is too wide.
   const onResize = (): void => {
     const s: FloatingState = getFloatingState();
-    if (s.mode !== 'floating') return;
-    const size = clampSize(s.size.width, s.size.height);
-    updateFloatingState({
-      position: clampPosition(s.position.x, s.position.y, size.width),
-      size,
-    });
+    if (s.mode === 'floating') {
+      const size = clampSize(s.size.width, s.size.height);
+      updateFloatingState({
+        position: clampPosition(s.position.x, s.position.y, size.width),
+        size,
+      });
+    } else if (s.mode === 'sidebar') {
+      clampSidebarWidth();
+    }
   };
   window.addEventListener('resize', onResize);
 
@@ -582,6 +642,9 @@ export function setupFloatingWindow(trace: Trace): FloatingWindowHandle {
       if (activeGesture !== null) {
         onGestureEnd();
       }
+      // Release the right-rail CSS variable so the page container returns
+      // to full width. Must happen before mode reset to avoid a flash.
+      clearRightRailWidth();
       // Force mode back to tab so any pending render won't recreate UI
       updateFloatingState({mode: 'tab'});
       // m.mount(el, null) is Mithril's official unmount path — tears down

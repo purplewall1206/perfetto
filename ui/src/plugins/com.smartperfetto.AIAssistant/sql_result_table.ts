@@ -27,7 +27,7 @@ import {
 import {
   getColumnClasses,
 } from './renderers/formatters';
-import {escapeHtml} from './data_formatter';
+import {escapeHtml, sanitizeHtml} from './data_formatter';
 
 /**
  * User interaction data for focus tracking (Agent-Driven Architecture v2.0).
@@ -1458,7 +1458,11 @@ export class SqlResultTable implements m.ClassComponent<SqlResultTableAttrs> {
   private formatMarkdown(content: string): string {
     if (!content) return '';
 
-    return escapeHtml(content)
+    // sanitizeHtml as a defense-in-depth backstop — matches the pattern used
+    // by formatMessage() in data_formatter.ts. The escapeHtml call above
+    // handles the primary case, but any future additions to these regexes
+    // could introduce raw HTML; the sanitizer catches those.
+    return sanitizeHtml(escapeHtml(content)
       // 粗体
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       // 斜体
@@ -1466,6 +1470,6 @@ export class SqlResultTable implements m.ClassComponent<SqlResultTableAttrs> {
       // 代码
       .replace(/`(.+?)`/g, '<code>$1</code>')
       // 换行
-      .replace(/\n/g, '<br>');
+      .replace(/\n/g, '<br>'));
   }
 }

@@ -15,7 +15,7 @@
 
 const STORAGE_KEY = 'smartperfetto-floating-window-v1';
 
-export type FloatingMode = 'tab' | 'floating';
+export type FloatingMode = 'tab' | 'floating' | 'sidebar';
 
 export interface FloatingState {
   mode: FloatingMode;
@@ -23,6 +23,8 @@ export interface FloatingState {
   position: {x: number; y: number};
   /** Window size in pixels. */
   size: {width: number; height: number};
+  /** Right-sidebar geometry. Persisted to localStorage separately from mode. */
+  sidebar: {width: number; collapsed: boolean};
 }
 
 export const FLOATING_MIN_WIDTH = 400;
@@ -33,6 +35,13 @@ const DEFAULT_HEIGHT = 540;
 const DEFAULT_MARGIN = 24;
 const FALLBACK_VIEWPORT_WIDTH = 1280;
 const FALLBACK_VIEWPORT_HEIGHT = 800;
+
+// ── Sidebar constants ──────────────────────────────────────────────────
+export const SIDEBAR_DEFAULT_WIDTH = 400;
+export const SIDEBAR_MIN_WIDTH = 300;
+export const SIDEBAR_COLLAPSED_WIDTH = 36;
+/** Never consume more than this fraction of the viewport for the sidebar. */
+const SIDEBAR_MAX_WIDTH_RATIO = 0.5;
 
 /** Clamp a value to [min, max]. Exported so the window module can reuse it. */
 export function clamp(value: number, min: number, max: number): number {
@@ -64,6 +73,7 @@ function defaultState(): FloatingState {
   return {
     mode: 'tab',
     ...computeDefaultGeometry(viewportW, viewportH),
+    sidebar: {width: SIDEBAR_DEFAULT_WIDTH, collapsed: false},
   };
 }
 
@@ -75,16 +85,27 @@ function loadFromStorage(): FloatingState | null {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
     // Always reset mode to 'tab' on load — never auto-restore the floating
-    // window across page reloads, that would be surprising.
+    // window or sidebar across page reloads, that would be surprising.
+    // Validate position — corrupt/NaN/Infinity values from storage would
+    // render the window invisible (e.g. "left: NaNpx").
+    const rawX = Number(parsed.position?.x ?? 0);
+    const rawY = Number(parsed.position?.y ?? 0);
     return {
       mode: 'tab',
       position: {
-        x: Number(parsed.position?.x ?? 0),
-        y: Number(parsed.position?.y ?? 0),
+        x: Number.isFinite(rawX) ? rawX : 0,
+        y: Number.isFinite(rawY) ? rawY : 0,
       },
       size: {
         width: clamp(Number(parsed.size?.width ?? DEFAULT_WIDTH), FLOATING_MIN_WIDTH, FLOATING_MAX_DIM),
         height: clamp(Number(parsed.size?.height ?? DEFAULT_HEIGHT), FLOATING_MIN_HEIGHT, FLOATING_MAX_DIM),
+      },
+      sidebar: {
+        width: clamp(
+          Number(parsed.sidebar?.width ?? SIDEBAR_DEFAULT_WIDTH),
+          SIDEBAR_MIN_WIDTH, FLOATING_MAX_DIM,
+        ),
+        collapsed: Boolean(parsed.sidebar?.collapsed ?? false),
       },
     };
   } catch {
@@ -96,10 +117,11 @@ function loadFromStorage(): FloatingState | null {
 function saveToStorage(s: FloatingState): void {
   if (typeof window === 'undefined') return;
   try {
-    // Don't persist mode — popup never auto-opens on reload.
+    // Don't persist mode — popup/sidebar never auto-opens on reload.
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
       position: s.position,
       size: s.size,
+      sidebar: s.sidebar,
     }));
   } catch {
     // Quota or disabled storage — ignore.
@@ -122,9 +144,13 @@ export function updateFloatingState(update: Partial<FloatingState>): void {
     ...update,
     position: update.position ? {...state.position, ...update.position} : state.position,
     size: update.size ? {...state.size, ...update.size} : state.size,
+    sidebar: update.sidebar ? {...state.sidebar, ...update.sidebar} : state.sidebar,
   };
   saveToStorage(state);
-  for (const fn of listeners) {
+  // Snapshot the listener set before iterating — a listener that adds or
+  // removes a subscriber during notification would otherwise mutate the
+  // Set under the for-of loop (drag/resize path fires this on every rAF).
+  for (const fn of [...listeners]) {
     try {
       fn();
     } catch (e) {
@@ -316,4 +342,35 @@ export function clampFloatingGeometryToViewport(): void {
     position: {x, y},
     size: {width, height},
   });
+}
+
+// ── Sidebar helpers ────────────────────────────────────────────────────
+
+/**
+ * Toggle sidebar collapsed/expanded. Only meaningful when mode === 'sidebar'.
+ * This is persistent display chrome, not transient mount-bridge state.
+ */
+export function toggleSidebarCollapsed(): void {
+  if (state.mode !== 'sidebar') return;
+  updateFloatingState({
+    sidebar: {...state.sidebar, collapsed: !state.sidebar.collapsed},
+  });
+}
+
+/**
+ * Clamp sidebar width so it never exceeds SIDEBAR_MAX_WIDTH_RATIO of the
+ * viewport. Called on window resize while in sidebar mode.
+ */
+export function clampSidebarWidth(): void {
+  if (typeof window === 'undefined') return;
+  const maxW = Math.floor(window.innerWidth * SIDEBAR_MAX_WIDTH_RATIO);
+  const clamped = clamp(state.sidebar.width, SIDEBAR_MIN_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, maxW));
+  if (clamped !== state.sidebar.width) {
+    updateFloatingState({sidebar: {...state.sidebar, width: clamped}});
+  }
+}
+
+/** Effective pixel width of the sidebar (accounting for collapsed state). */
+export function getEffectiveSidebarWidth(): number {
+  return state.sidebar.collapsed ? SIDEBAR_COLLAPSED_WIDTH : state.sidebar.width;
 }

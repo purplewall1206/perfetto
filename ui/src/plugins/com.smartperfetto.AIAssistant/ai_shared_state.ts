@@ -7,14 +7,19 @@
  *
  * Enables the Status Bar widget, Area Selection Tab, and Timeline Notes to
  * read AI analysis state without a direct reference to the AIPanel instance.
- * AIPanel writes; other components read. Mithril's synchronous redraw model
- * ensures consistency — all reads happen in the same render cycle.
+ * AIPanel writes; other components read.
+ *
+ * Each update triggers m.redraw() so that Status Bar, Area Selection Tab,
+ * and other readers see fresh state regardless of whether the caller also
+ * triggered a redraw (self-contained update semantics).
  *
  * Why a module singleton instead of Perfetto's mountStore():
  * - State is ephemeral (no cross-trace persistence needed)
  * - Needs access from both index.ts (registration) and ai_panel.ts (updates)
  * - mountStore() is per-plugin scoped and serialization-oriented
  */
+
+import m from 'mithril';
 
 /**
  * An AI-detected finding that can be annotated on the timeline.
@@ -77,6 +82,9 @@ export function getAISharedState(): Readonly<AISharedState> {
 /** Merge partial updates into the shared state. */
 export function updateAISharedState(update: Partial<AISharedState>): void {
   sharedState = {...sharedState, ...update};
+  // Schedule a Mithril redraw so Status Bar, Area Selection Tab, and other
+  // readers reflect the update without relying on callers to m.redraw().
+  m.redraw();
 }
 
 /** Reset to default (e.g. on trace unload or clear-chat). */

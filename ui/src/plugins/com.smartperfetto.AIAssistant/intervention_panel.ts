@@ -61,43 +61,43 @@ function getInterventionInfo(type: InterventionType): { title: string; icon: str
       return {
         title: '分析置信度较低',
         icon: '🤔',
-        color: '#f59e0b', // amber
+        color: 'var(--chat-warning, #f59e0b)',
       };
     case 'ambiguity':
       return {
         title: '存在多个分析方向',
         icon: '🔀',
-        color: '#6366f1', // indigo
+        color: 'var(--chat-primary, #6366f1)',
       };
     case 'timeout':
       return {
         title: '分析时间较长',
         icon: '⏰',
-        color: '#ef4444', // red
+        color: 'var(--chat-error, #ef4444)',
       };
     case 'agent_request':
       return {
         title: '需要更多信息',
         icon: '❓',
-        color: '#3b82f6', // blue
+        color: 'var(--chat-primary, #3b82f6)',
       };
     case 'circuit_breaker':
       return {
         title: '检测到异常',
         icon: '⚠️',
-        color: '#ef4444', // red
+        color: 'var(--chat-error, #ef4444)',
       };
     case 'validation_required':
       return {
         title: '需要确认操作',
         icon: '✅',
-        color: '#22c55e', // green
+        color: 'var(--chat-success, #22c55e)',
       };
     default:
       return {
         title: '需要用户输入',
         icon: '📝',
-        color: '#6b7280', // gray
+        color: 'var(--chat-text-secondary, #6b7280)',
       };
   }
 }
@@ -121,9 +121,9 @@ function getActionButtonStyle(action: InterventionAction, recommended: boolean):
   if (recommended) {
     return {
       ...baseStyle,
-      background: '#3b82f6',
+      background: 'var(--chat-primary, #3b82f6)',
       color: 'white',
-      boxShadow: '0 2px 4px rgba(59, 130, 246, 0.3)',
+      boxShadow: '0 2px 4px color-mix(in srgb, var(--chat-primary, #3b82f6) 30%, transparent)',
     };
   }
 
@@ -132,22 +132,22 @@ function getActionButtonStyle(action: InterventionAction, recommended: boolean):
       return {
         ...baseStyle,
         background: 'var(--chat-bg)',
-        color: '#dc2626',
-        border: '1px solid #fecaca',
+        color: 'var(--chat-error, #dc2626)',
+        border: '1px solid color-mix(in srgb, var(--chat-error, #dc2626) 25%, transparent)',
       };
     case 'continue':
       return {
         ...baseStyle,
-        background: '#f0fdf4',
-        color: '#16a34a',
-        border: '1px solid #bbf7d0',
+        background: 'color-mix(in srgb, var(--chat-success, #16a34a) 8%, var(--chat-bg))',
+        color: 'var(--chat-success, #16a34a)',
+        border: '1px solid color-mix(in srgb, var(--chat-success, #16a34a) 25%, transparent)',
       };
     case 'focus':
       return {
         ...baseStyle,
         background: 'var(--chat-bg)',
-        color: '#4f46e5',
-        border: '1px solid #c7d2fe',
+        color: 'var(--chat-primary, #4f46e5)',
+        border: '1px solid color-mix(in srgb, var(--chat-primary, #4f46e5) 25%, transparent)',
       };
     default:
       return {
@@ -257,6 +257,9 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
         console.error('[InterventionPanel] Failed to send response:', result.error);
         onStateChange({ isSending: false });
       }
+      // Mithril does not auto-redraw after async continuations — explicit
+      // redraw ensures the panel updates immediately after the await.
+      m.redraw();
     };
 
     // Handle abort button click
@@ -286,6 +289,7 @@ export const InterventionPanel: m.Component<InterventionPanelAttrs> = {
         console.error('[InterventionPanel] Failed to abort intervention:', result.error);
         onStateChange({ isSending: false });
       }
+      m.redraw();
     };
 
     // Panel styles - using CSS custom properties for dark mode support

@@ -29,9 +29,9 @@ import {
 import {restoreOverlayTracks} from './track_overlay';
 import {createAIAreaSelectionTab} from './ai_area_selection_tab';
 import {getAISharedState, resetAISharedState} from './ai_shared_state';
-import {AI_NOTE_COLORS} from './ai_timeline_notes';
+import {AI_NOTE_COLORS, resetActiveNoteIds} from './ai_timeline_notes';
 import {locateFloatingWindow, setupFloatingWindow} from './ai_floating_window';
-import {getFloatingState, updateFloatingState} from './ai_floating_state';
+import {getFloatingState, toggleSidebarCollapsed, updateFloatingState} from './ai_floating_state';
 import {resetTransientState, switchFloatingMode} from './ai_transient_state';
 
 export default class implements PerfettoPlugin {
@@ -39,29 +39,31 @@ export default class implements PerfettoPlugin {
   async onTraceLoad(ctx: Trace): Promise<void> {
     // Reset shared state to prevent cross-trace leakage (Codex #5).
     resetAISharedState();
+    // Reset timeline note tracking so old trace IDs don't leak into the new
+    // trace's cleanup path (the old trace's NoteManager is gone).
+    resetActiveNoteIds();
     // Drop any transient state left over from a previous trace — a new
     // trace should not inherit the old trace's input draft, SSE cursor, etc.
     resetTransientState();
     // Force floating mode off on trace load (popup never auto-opens)
     updateFloatingState({mode: 'tab'});
 
-    // Mount the body-level floating window host. The host is empty when
-    // mode === 'tab' and contains the popup AIPanel when mode === 'floating'.
-    // Cleanup is registered on ctx.trash so it disposes on trace unload.
-    const floatingHandle = setupFloatingWindow(ctx);
-    ctx.trash.defer(() => floatingHandle.dispose());
+    // Mount the unified surface host on document.body. The host dispatches
+    // to FloatingWindow (mode=floating), SidebarPanel (mode=sidebar), or
+    // null (mode=tab). Only one AIPanel instance exists at any time.
+    const surfaceHandle = setupFloatingWindow(ctx);
+    ctx.trash.defer(() => surfaceHandle.dispose());
 
     // Register the AI Assistant tab. Tab content switches between the
-    // normal AIPanel and a placeholder when the popup is active. Only
-    // ONE AIPanel instance exists at any time — the placeholder ensures
-    // we never double-mount.
+    // normal AIPanel and a placeholder when the panel is externalized
+    // (floating or sidebar). Only ONE AIPanel instance exists at any time.
     ctx.tabs.registerTab({
       uri: 'ai-assistant',
       content: {
         render: () => {
-          if (getFloatingState().mode === 'floating') {
-            return renderFloatingPlaceholder();
-          }
+          const mode = getFloatingState().mode;
+          if (mode === 'floating') return renderFloatingPlaceholder();
+          if (mode === 'sidebar') return renderSidebarPlaceholder();
           return m(AIPanel, {engine: ctx.engine, trace: ctx});
         },
         getTitle: () => 'AI Assistant',
@@ -82,11 +84,14 @@ export default class implements PerfettoPlugin {
       id: 'com.smartperfetto.AIAssistant.OpenPanel',
       name: 'Open AI Assistant',
       callback: () => {
-        // If the panel is already floating, locate+flash the popup so the
-        // user can find it (handles off-screen + inattentional blindness).
-        // Otherwise open the tab normally.
-        if (getFloatingState().mode === 'floating') {
+        const mode = getFloatingState().mode;
+        if (mode === 'floating') {
+          // Locate+flash the popup (handles off-screen + inattentional blindness).
           locateFloatingWindow();
+        } else if (mode === 'sidebar') {
+          // If collapsed, expand; if already expanded, no-op.
+          const s = getFloatingState();
+          if (s.sidebar.collapsed) toggleSidebarCollapsed();
         } else {
           ctx.tabs.showTab('ai-assistant');
         }
@@ -122,6 +127,20 @@ export default class implements PerfettoPlugin {
       },
     });
 
+    // Toggle sidebar mode — switches between sidebar and tab.
+    ctx.commands.registerCommand({
+      id: 'com.smartperfetto.AIAssistant.ToggleSidebar',
+      name: 'Toggle AI Sidebar',
+      callback: () => {
+        const mode = getFloatingState().mode;
+        if (mode === 'sidebar') {
+          switchFloatingMode('tab');
+        } else {
+          switchFloatingMode('sidebar');
+        }
+      },
+    });
+
     // ── F1: Area Selection Analysis Tab ──
     // When user selects a time range, show quick stats + AI analyze button
     // in the bottom details panel — no tab switch needed.
@@ -152,7 +171,17 @@ export default class implements PerfettoPlugin {
           label: labels[state.status] ?? 'AI',
           icon: 'smart_toy',
           intent: intents[state.status] ?? Intent.None,
-          onclick: () => ctx.tabs.showTab('ai-assistant'),
+          onclick: () => {
+            const mode = getFloatingState().mode;
+            if (mode === 'floating') {
+              locateFloatingWindow();
+            } else if (mode === 'sidebar') {
+              const s = getFloatingState();
+              if (s.sidebar.collapsed) toggleSidebarCollapsed();
+            } else {
+              ctx.tabs.showTab('ai-assistant');
+            }
+          },
         };
       },
       popupContent: () => {
@@ -221,18 +250,65 @@ function renderFloatingPlaceholder(): m.Children {
       padding: 48px 24px;
       height: 100%;
       font-family: 'Roboto', sans-serif;
-      color: #5f6368;
+      color: var(--pf-color-text-muted, #5f6368);
       text-align: center;
     `,
   }, [
     m('div', {style: 'font-size: 48px; line-height: 1'}, '\u{1F916}'),
-    m('div', {style: 'font-size: 16px; font-weight: 500; color: #202124'},
+    m('div', {style: 'font-size: 16px; font-weight: 500; color: var(--pf-color-text, #202124)'},
       'AI 助手已弹出为浮动窗口'),
     m('div', {style: 'font-size: 13px; max-width: 360px; line-height: 1.5'},
       '浮动窗口可以拖动位置和调整大小，并且在你切换其他面板时保持可见。点击下面的按钮可以收回到这个标签页。'),
     m('button', {
       style: `
-        background: #1a73e8;
+        background: var(--pf-color-primary, #3d5688);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 10px 20px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+      `,
+      onclick: () => switchFloatingMode('tab'),
+    }, [
+      m(Icon, {icon: 'open_in_new_off', style: 'font-size: 16px'}),
+      m('span', '收回到标签页'),
+    ]),
+  ]);
+}
+
+/**
+ * Placeholder shown in the AI Assistant tab when the panel is displayed
+ * in the right sidebar.
+ */
+function renderSidebarPlaceholder(): m.Children {
+  return m('div', {
+    style: `
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 48px 24px;
+      height: 100%;
+      font-family: 'Roboto', sans-serif;
+      color: var(--pf-color-text-muted, #5f6368);
+      text-align: center;
+    `,
+  }, [
+    m('div', {style: 'font-size: 48px; line-height: 1'}, '\u{1F916}'),
+    m('div', {style: 'font-size: 16px; font-weight: 500; color: var(--pf-color-text, #202124)'},
+      'AI 助手已显示在右侧边栏'),
+    m('div', {style: 'font-size: 13px; max-width: 360px; line-height: 1.5'},
+      '侧边栏不会遮挡 Trace 内容，可以拖动左边缘调整宽度。点击下面的按钮可以收回到这个标签页。'),
+    m('button', {
+      style: `
+        background: var(--pf-color-primary, #3d5688);
         color: white;
         border: none;
         border-radius: 6px;

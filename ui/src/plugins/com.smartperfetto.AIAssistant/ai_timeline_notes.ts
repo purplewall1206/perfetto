@@ -130,3 +130,12 @@ export function clearAIFindingNotes(trace: Trace): void {
   }
   activeNoteIds = [];
 }
+
+/**
+ * Reset the module-level note tracking array without attempting to remove
+ * notes from any trace. Called on trace unload (from index.ts) to prevent
+ * the old trace's note IDs from leaking into the new trace's cleanup path.
+ */
+export function resetActiveNoteIds(): void {
+  activeNoteIds = [];
+}

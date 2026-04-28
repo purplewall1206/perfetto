@@ -57,6 +57,9 @@ import {CONTRACT_ALIASES} from './conclusion_contract_aliases';
 import {STEP_TO_OVERLAY} from './track_overlay';
 import {updateAISharedState} from './ai_shared_state';
 
+/** Set to true for verbose SSE event logging during development. */
+const DEBUG_SSE = false;
+
 type AnalysisHypothesisItem = {
   status?: string;
   description?: string;
@@ -1196,12 +1199,12 @@ export function handleSkillLayeredResultEvent(
     'unknown';
   const deduplicationKey = `skill_layered_result:${skillId}`;
   if (ctx.displayedSkillProgress.has(deduplicationKey)) {
-    console.log('[SSEHandlers] Skipping duplicate skill_layered_result:', deduplicationKey);
+    if (DEBUG_SSE) console.log('[SSEHandlers] Skipping duplicate skill_layered_result:', deduplicationKey);
     return {};
   }
   ctx.displayedSkillProgress.add(deduplicationKey);
 
-  console.log('[SSEHandlers] skill_layered_result received:', payload);
+  if (DEBUG_SSE) console.log('[SSEHandlers] skill_layered_result received:', payload);
   const layers = layeredResult;
   const metadata = Object.keys(resultMetadata).length > 0 ? resultMetadata : {
     skillName: readStringField(payload, 'skillName') || readStringField(payload, 'skillId'),
@@ -2020,14 +2023,14 @@ export function handleAnalysisCompletedEvent(
   const architecture = readStringField(eventRecord, 'architecture');
   const rawPayload = asRecord(eventRecord.data);
   const payload = toAnalysisCompletedPayload(eventRecord.data);
-  console.log('[SSEHandlers] analysis_completed received, architecture:', architecture || 'unknown');
+  if (DEBUG_SSE) console.log('[SSEHandlers] analysis_completed received, architecture:', architecture || 'unknown');
 
   mergeConversationTimelineFromAnalysisCompleted(rawPayload, ctx);
 
   // Guard against duplicate conclusion handling — but still extract reportUrl
   // (agentv3 sends 'conclusion' first, then 'analysis_completed' carries reportUrl)
   if (ctx.completionHandled) {
-    console.log('[SSEHandlers] Completion already handled, extracting reportUrl only');
+    if (DEBUG_SSE) console.log('[SSEHandlers] Completion already handled, extracting reportUrl only');
     const reportUrl = payload?.reportUrl;
     if (reportUrl) {
       // Attach reportUrl to the existing answer/conclusion message
@@ -2336,7 +2339,7 @@ export function handleDataEvent(
   const eventRecord = asRecord(data);
   if (Object.keys(eventRecord).length === 0) return {};
 
-  console.log('[SSEHandlers] v2.0 data event received:', eventRecord.id, eventRecord.envelope);
+  if (DEBUG_SSE) console.log('[SSEHandlers] v2.0 data event received:', eventRecord.id, eventRecord.envelope);
 
   const rawEnvelope = eventRecord.envelope;
   const envelopeCandidates = Array.isArray(rawEnvelope)
@@ -2356,7 +2359,7 @@ export function handleDataEvent(
       `${envelope.meta.skillId || 'unknown'}:${envelope.meta.stepId || 'unknown'}`;
 
     if (ctx.displayedSkillProgress.has(deduplicationKey)) {
-      console.log('[SSEHandlers] Skipping duplicate data envelope:', deduplicationKey);
+      if (DEBUG_SSE) console.log('[SSEHandlers] Skipping duplicate data envelope:', deduplicationKey);
       continue;
     }
     ctx.displayedSkillProgress.add(deduplicationKey);
@@ -2492,7 +2495,7 @@ function renderDataEnvelope(envelope: DataEnvelope, ctx: SSEHandlerContext): voi
           let chartContent = `### \uD83D\uDCC9 ${title}\n\n`;
           chartContent += `**\u56FE\u8868\u7C7B\u578B:** ${readStringField(chartConfig, 'type', 'unknown')}\n\n`;
           chartContent += `*[\u56FE\u8868\u6E32\u67D3\u6682\u672A\u5B9E\u73B0\uFF0C\u6570\u636E\u5DF2\u8BB0\u5F55]*\n`;
-          console.log('[SSEHandlers] Chart data received but no renderable data:', chartConfig);
+          if (DEBUG_SSE) console.log('[SSEHandlers] Chart data received but no renderable data:', chartConfig);
           ctx.addMessage({
             id: ctx.generateId(),
             role: 'assistant',
@@ -2589,7 +2592,7 @@ export function handleSkillErrorEvent(
       error,
       timestamp: Date.now(),
     };
-    console.log('[SSEHandlers] Skill error collected:', errorInfo);
+    if (DEBUG_SSE) console.log('[SSEHandlers] Skill error collected:', errorInfo);
     ctx.collectedErrors.push(errorInfo);
     pushStreamingOutput(ctx, `步骤错误: ${errorInfo.skillId}${errorInfo.stepId ? `/${errorInfo.stepId}` : ''}`);
   }
@@ -2680,7 +2683,7 @@ export function handleInterventionRequiredEvent(
   ctx: SSEHandlerContext
 ): SSEHandlerResult {
   const interventionData = eventPayload(data);
-  console.log('[SSEHandlers] intervention_required received:', interventionData);
+  if (DEBUG_SSE) console.log('[SSEHandlers] intervention_required received:', interventionData);
 
   if (!ctx.setInterventionState) {
     console.warn('[SSEHandlers] Intervention state handler not available');
@@ -2746,7 +2749,7 @@ export function handleInterventionResolvedEvent(
   ctx: SSEHandlerContext
 ): SSEHandlerResult {
   const resolvedData = eventPayload(data);
-  console.log('[SSEHandlers] intervention_resolved received:', resolvedData);
+  if (DEBUG_SSE) console.log('[SSEHandlers] intervention_resolved received:', resolvedData);
 
   if (!ctx.setInterventionState) {
     return {};
@@ -2791,7 +2794,7 @@ export function handleInterventionTimeoutEvent(
   ctx: SSEHandlerContext
 ): SSEHandlerResult {
   const timeoutData = eventPayload(data);
-  console.log('[SSEHandlers] intervention_timeout received:', timeoutData);
+  if (DEBUG_SSE) console.log('[SSEHandlers] intervention_timeout received:', timeoutData);
 
   if (!ctx.setInterventionState) {
     return {};
@@ -2829,7 +2832,7 @@ export function handleStrategySelectedEvent(
   ctx: SSEHandlerContext
 ): SSEHandlerResult {
   const strategyData = eventPayload(data);
-  console.log('[SSEHandlers] strategy_selected received:', strategyData);
+  if (DEBUG_SSE) console.log('[SSEHandlers] strategy_selected received:', strategyData);
 
   if (Object.keys(strategyData).length === 0) return {};
 
@@ -2862,7 +2865,7 @@ export function handleStrategyFallbackEvent(
   ctx: SSEHandlerContext
 ): SSEHandlerResult {
   const fallbackData = eventPayload(data);
-  console.log('[SSEHandlers] strategy_fallback received:', fallbackData);
+  if (DEBUG_SSE) console.log('[SSEHandlers] strategy_fallback received:', fallbackData);
 
   if (Object.keys(fallbackData).length === 0) return {};
   const reason = readStringField(fallbackData, 'reason', '未命中预设策略');
@@ -2887,7 +2890,7 @@ export function handleFocusUpdatedEvent(
   _ctx: SSEHandlerContext  // eslint-disable-line @typescript-eslint/no-unused-vars
 ): SSEHandlerResult {
   // Focus updates are typically silent - just log for debugging
-  console.log('[SSEHandlers] focus_updated:', eventPayload(data));
+  if (DEBUG_SSE) console.log('[SSEHandlers] focus_updated:', eventPayload(data));
   return {};
 }
 
@@ -3209,7 +3212,7 @@ export function handleSSEEvent(
   ctx: SSEHandlerContext
 ): SSEHandlerResult {
   const eventData = asRecord(data);
-  console.log('[SSEHandlers] SSE event:', eventType, eventData);
+  if (DEBUG_SSE) console.log('[SSEHandlers] SSE event:', eventType, eventData);
 
   const result = handleSSEEventInner(eventType, eventData, ctx);
 
@@ -3360,7 +3363,7 @@ function handleSSEEventInner(
       // So conclusion is near-terminal: stop loading but keep connection open.
       const conclusionPayload = eventPayload(eventData);
       const conclusionText = readStringField(conclusionPayload, 'conclusion');
-      console.log('[SSEHandlers] CONCLUSION event received');
+      if (DEBUG_SSE) console.log('[SSEHandlers] CONCLUSION event received');
 
       // Complete streaming state so UI doesn't stay loading
       if (ctx.streamingFlow.status === 'running') {
@@ -3455,7 +3458,7 @@ function handleSSEEventInner(
 
     case 'incremental_scope':
       // Incremental scope changes are internal - just log
-      console.log('[SSEHandlers] incremental_scope:', eventData.data);
+      if (DEBUG_SSE) console.log('[SSEHandlers] incremental_scope:', eventData.data);
       {
         const payload = asRecord(eventData.data);
         const scopeType = payload.scopeType;
@@ -3481,7 +3484,7 @@ function handleSSEEventInner(
       return { stopLoading: true };
 
     default:
-      console.log(`[SSEHandlers] Unhandled event type: ${eventType}`);
+      if (DEBUG_SSE) console.warn(`[SSEHandlers] Unhandled event type: ${eventType}`);
       return {};
   }
 }

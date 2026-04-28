@@ -31,7 +31,7 @@
  */
 
 import {assetSrc} from '../../base/assets';
-import {decodeBase64Unicode} from './data_formatter';
+import {decodeBase64Unicode, sanitizeHtml} from './data_formatter';
 
 /**
  * Get the global Mermaid instance if loaded.
@@ -189,8 +189,12 @@ export class MermaidRenderer {
 
       try {
         // mermaid.render returns {svg, bindFunctions} in modern versions.
+        // SECURITY: securityLevel:'strict' is the primary guard against SVG XSS.
+        // sanitizeHtml is a defense-in-depth backstop — strips onerror/onload
+        // attributes and javascript: URIs that could slip through if mermaid's
+        // strict mode is ever weakened by an upgrade.
         const result: any = await mermaid.render(renderId, code);
-        host.innerHTML = result?.svg || '';
+        host.innerHTML = sanitizeHtml(result?.svg || '');
         if (typeof result?.bindFunctions === 'function') {
           result.bindFunctions(host);
         }

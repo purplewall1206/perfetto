@@ -309,7 +309,7 @@ export async function restoreOverlayTracks(trace: Trace): Promise<void> {
     }
 
     if (restored > 0) {
-      console.log(
+      console.debug(
         `[TrackOverlay] Restored ${restored} overlay(s) from sessionStorage`,
       );
     }
@@ -495,7 +495,7 @@ export async function createOverlayTrack(
   // Persist to sessionStorage for hot-reload survival (use capped rows, not raw input)
   persistOverlayData(trace.traceInfo.uuid, overlayId, columns, limitedRows);
 
-  console.log(
+  console.debug(
     `[TrackOverlay:${overlayId}] Created ${newNodeIds.length} track(s) ` +
       `with ${limitedRows.length} row(s)`,
   );
@@ -531,7 +531,7 @@ export function cleanupOverlayTracks(trace: Trace, overlayId?: string): void {
   }
 
   if (removed > 0) {
-    console.log(
+    console.debug(
       `[TrackOverlay] Cleaned up ${removed} track(s)` +
         (overlayId ? ` for ${overlayId}` : ' (all)'),
     );

@@ -70,7 +70,7 @@ const STYLES = {
     align-items: center;
     gap: 8px;
     font-weight: 500;
-    color: #1a73e8;
+    color: var(--chat-primary, #3d5688);
     font-size: 13px;
   `,
   statsGrid: `
@@ -79,29 +79,29 @@ const STYLES = {
     gap: 6px;
   `,
   statCard: `
-    background: #f8f9fa;
+    background: var(--chat-bg-secondary, #f8f9fa);
     border-radius: 6px;
     padding: 8px 10px;
-    border: 1px solid #e8eaed;
+    border: 1px solid var(--chat-border, #e8eaed);
   `,
   statLabel: `
     font-size: 11px;
-    color: #5f6368;
+    color: var(--chat-text-secondary, #5f6368);
     margin-bottom: 2px;
   `,
-  statValue: `${STAT_VALUE_BASE} color: #202124;`,
-  statValueWarning: `${STAT_VALUE_BASE} color: #ea4335;`,
+  statValue: `${STAT_VALUE_BASE} color: var(--chat-text, #202124);`,
+  statValueWarning: `${STAT_VALUE_BASE} color: var(--chat-error, #ea4335);`,
   analyzeBtn: `
     ${ANALYZE_BTN_BASE}
-    background: #1a73e8;
+    background: var(--chat-primary, #3d5688);
     color: white;
     cursor: pointer;
     transition: background 0.15s;
   `,
   analyzeBtnDisabled: `
     ${ANALYZE_BTN_BASE}
-    background: #dadce0;
-    color: #80868b;
+    background: var(--chat-bg-tertiary, #dadce0);
+    color: var(--chat-text-secondary, #80868b);
     cursor: not-allowed;
   `,
   actions: `
@@ -112,14 +112,14 @@ const STYLES = {
   `,
   hint: `
     font-size: 11px;
-    color: #80868b;
+    color: var(--chat-text-secondary, #80868b);
     font-style: italic;
   `,
-  errorText: `color: #ea4335; font-size: 12px;`,
+  errorText: `color: var(--chat-error, #ea4335); font-size: 12px;`,
 } as const;
 
-const ANALYZE_BTN_HOVER_BG = '#1557b0';
-const ANALYZE_BTN_BG = '#1a73e8';
+const ANALYZE_BTN_HOVER_BG = 'var(--chat-primary-hover, #2e4470)';
+const ANALYZE_BTN_BG = 'var(--chat-primary, #3d5688)';
 
 // ── Factory ─────────────────────────────────────────────────────────────
 
@@ -163,6 +163,8 @@ export function createAIAreaSelectionTab(trace: Trace): AreaSelectionTab {
 
   /** Trigger AI analysis scoped to this selection. */
   function analyzeWithAI(sel: AreaSelection): void {
+    // Guard: don't queue a new analysis if one is already in flight.
+    if (getAISharedState().status === 'analyzing') return;
     // Convert bigint→number for JSON serialization compatibility (Codex #6).
     updateAISharedState({
       pendingSelectionAnalysis: {

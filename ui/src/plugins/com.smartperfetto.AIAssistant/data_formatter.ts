@@ -419,14 +419,6 @@ export function parseSummaryToTable(summary: string): { columns: string[], rows:
  * @see generated/frame_analysis.types.ts for type definitions
  */
 export function convertToExpandableSections(data: unknown): ExpandableSections {
-  // Type guard: validate input format
-  console.log('[convertToExpandableSections] Input data:', {
-    type: typeof data,
-    isNull: data === null,
-    isUndefined: data === undefined,
-    keys: data && typeof data === 'object' ? Object.keys(data) : [],
-  });
-
   if (!isFrameDetailData(data)) {
     console.warn('[convertToExpandableSections] Invalid data format - failing isFrameDetailData check:', data);
     return {};

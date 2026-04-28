@@ -27,19 +27,21 @@ export interface SettingsModalAttrs {
   initialStatus?: ServerStatus;
 }
 
-// Modern color scheme
+// Dark-mode-aware color scheme using CSS variables from the plugin's
+// --chat-* token layer (defined in styles.scss). Fallback hex values match
+// the light-mode defaults so the modal looks correct even outside .ai-panel.
 const COLORS = {
-  primary: '#6366f1',
-  primaryHover: '#4f46e5',
-  primaryLight: 'rgba(99, 102, 241, 0.1)',
-  success: '#10b981',
-  successLight: 'rgba(16, 185, 129, 0.1)',
-  warning: '#f59e0b',
-  warningLight: 'rgba(245, 158, 11, 0.1)',
-  error: '#ef4444',
-  errorLight: 'rgba(239, 68, 68, 0.1)',
-  info: '#3b82f6',
-  infoLight: 'rgba(59, 130, 246, 0.1)',
+  primary: 'var(--chat-primary, #3d5688)',
+  primaryHover: 'var(--chat-primary-hover, #2e4470)',
+  primaryLight: 'color-mix(in srgb, var(--chat-primary, #3d5688) 12%, transparent)',
+  success: 'var(--chat-success, #10b981)',
+  successLight: 'color-mix(in srgb, var(--chat-success, #10b981) 12%, transparent)',
+  warning: 'var(--chat-warning, #f59e0b)',
+  warningLight: 'color-mix(in srgb, var(--chat-warning, #f59e0b) 12%, transparent)',
+  error: 'var(--chat-error, #ef4444)',
+  errorLight: 'color-mix(in srgb, var(--chat-error, #ef4444) 12%, transparent)',
+  info: 'var(--chat-primary, #3b82f6)',
+  infoLight: 'color-mix(in srgb, var(--chat-primary, #3b82f6) 12%, transparent)',
 };
 
 // Inline styles for modal
@@ -168,12 +170,12 @@ const MODAL_STYLES = {
   },
   alertInfo: {
     background: COLORS.infoLight,
-    border: `1px solid ${COLORS.info}40`,
+    border: `1px solid color-mix(in srgb, var(--chat-primary, #3b82f6) 25%, transparent)`,
     color: COLORS.info,
   },
   alertWarning: {
     background: COLORS.warningLight,
-    border: `1px solid ${COLORS.warning}40`,
+    border: `1px solid color-mix(in srgb, var(--chat-warning, #f59e0b) 25%, transparent)`,
     color: COLORS.warning,
   },
   alertIcon: {
@@ -429,9 +431,9 @@ export class SettingsModal implements m.ClassComponent<SettingsModalAttrs> {
               m('span', {style: MODAL_STYLES.alertIcon}, 'ℹ️'),
               m('div', [
                 m('span', 'AI model and provider are configured server-side via '),
-                m('code', {style: {background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px'}}, 'backend/.env'),
+                m('code', {style: {background: 'var(--chat-bg-tertiary, rgba(0,0,0,0.15))', padding: '2px 6px', borderRadius: '4px', fontSize: '12px'}}, 'backend/.env'),
                 m('span', '. See '),
-                m('code', {style: {background: 'rgba(0,0,0,0.2)', padding: '2px 6px', borderRadius: '4px', fontSize: '12px'}}, '.env.example'),
+                m('code', {style: {background: 'var(--chat-bg-tertiary, rgba(0,0,0,0.15))', padding: '2px 6px', borderRadius: '4px', fontSize: '12px'}}, '.env.example'),
                 m('span', ' for all available options.'),
               ]),
             ]),

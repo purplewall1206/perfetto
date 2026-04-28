@@ -41,6 +41,7 @@
 import {
   FloatingMode,
   clampFloatingGeometryToViewport,
+  clampSidebarWidth,
   updateFloatingState,
 } from './ai_floating_state';
 import {StreamingAnswerState, StreamingFlowState} from './types';
@@ -191,6 +192,11 @@ export function switchFloatingMode(newMode: FloatingMode): void {
   // or fully off-screen on first render (Codex round-2 HIGH).
   if (newMode === 'floating') {
     clampFloatingGeometryToViewport();
+  }
+  // Clamp sidebar width to viewport ratio on entry — a width saved on a
+  // 4K monitor would overflow the sidebar on a smaller viewport otherwise.
+  if (newMode === 'sidebar') {
+    clampSidebarWidth();
   }
   updateFloatingState({mode: newMode});
 }
