@@ -128,6 +128,42 @@ class GraphicsGpuTrace(TestSuite):
         4,"Triangle Acceleration","Number of triangles per ms-ms","Triangle/ms:ms"
         """))
 
+  def test_gpu_counter_groups_custom(self):
+    return DiffTestBlueprint(
+        trace=Path('gpu_counter_groups_custom.textproto'),
+        query="""
+        SELECT g.group_id, g.name, g.description,
+               t.name as track_name
+        FROM gpu_counter_group AS g
+        JOIN gpu_counter_track AS t
+          ON g.track_id = t.id
+        ORDER BY g.group_id, g.name, t.name;
+        """,
+        out=Csv("""
+        "group_id","name","description","track_name"
+        0,"[NULL]","[NULL]","Counter D"
+        5,"Memory","Memory counters","Counter C"
+        5,"Memory","Memory counters","Counter D"
+        6,"Compute Core","Compute core counters","Counter A"
+        6,"Compute Core","Compute core counters","Counter B"
+        100,"L2 Cache","L2 cache counters","Counter C"
+        """))
+
+  def test_gpu_context(self):
+    return DiffTestBlueprint(
+        trace=Path('gpu_context.textproto'),
+        query="""
+        INCLUDE PERFETTO MODULE std.gpu.context;
+        SELECT context_id, pid, api
+        FROM gpu_context
+        ORDER BY context_id;
+        """,
+        out=Csv("""
+        "context_id","pid","api"
+        1,100,"VULKAN"
+        2,200,"CUDA"
+        """))
+
   def test_gpu_render_stages(self):
     return DiffTestBlueprint(
         trace=Path('gpu_render_stages.py'),
@@ -524,3 +560,39 @@ class GraphicsGpuTrace(TestSuite):
           10,250.000000,"CounterB",1
           20,0.000000,"CounterB",1
         """))
+
+  def test_gpu_render_stages_flow(self):
+    return DiffTestBlueprint(
+        trace=Path('gpu_render_stages_flow.textproto'),
+        query='''
+          SELECT
+            slice_out.name AS source_slice,
+            slice_in.name AS dest_slice
+          FROM flow
+          JOIN slice AS slice_out ON flow.slice_out = slice_out.id
+          JOIN slice AS slice_in ON flow.slice_in = slice_in.id
+          ORDER BY slice_out.ts, slice_in.ts;
+        ''',
+        out=Csv('''
+          "source_slice","dest_slice"
+          "HostSubmit","softmax"
+          "softmax","cudaEventWait"
+          "softmax","matmul"
+        '''))
+
+  def test_gpu_api_arg(self):
+    return DiffTestBlueprint(
+        trace=Path('gpu_api_slice.textproto'),
+        query='''
+          SELECT
+            s.name AS slice_name,
+            extract_arg(s.arg_set_id, 'gpu_api') AS gpu_api
+          FROM slice s
+          WHERE extract_arg(s.arg_set_id, 'gpu_api') IS NOT NULL
+          ORDER BY s.ts;
+        ''',
+        out=Csv('''
+          "slice_name","gpu_api"
+          "cuLaunchKernel","GPU_API_CUDA"
+          "vkCmdDispatch","GPU_API_VULKAN"
+        '''))
