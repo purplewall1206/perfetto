@@ -670,18 +670,29 @@ def CheckoutGitRepo(path, git_url, revision, check_only):
   if check_only:
     return True
   path = path.replace('/', os.sep)
-  RmtreeIfExists(path)
-  MkdirRecursive(path)
-  logging.info('Fetching %s @ %s into %s', git_url, revision, path)
-  subprocess.check_call(['git', 'init', path], cwd=path)
-  CheckCallRetry(['git', 'fetch', '--quiet', '--depth', '1', git_url, revision],
-                 cwd=path)
-  subprocess.check_call(['git', 'checkout', revision, '--quiet'], cwd=path)
-  CheckCallRetry(
-      ['git', 'submodule', 'update', '--init', '--recursive', '--quiet'],
-      cwd=path)
-  assert (IsGitRepoCheckoutOutAtRevision(path, revision))
-  return True
+  max_attempts = 5
+  for attempt in range(1, max_attempts + 1):
+    try:
+      RmtreeIfExists(path)
+      MkdirRecursive(path)
+      logging.info('Fetching %s @ %s into %s', git_url, revision, path)
+      subprocess.check_call(['git', 'init', path], cwd=path)
+      subprocess.check_call(
+          ['git', 'fetch', '--quiet', '--depth', '1', git_url, revision],
+          cwd=path)
+      subprocess.check_call(['git', 'checkout', revision, '--quiet'], cwd=path)
+      CheckCallRetry(
+          ['git', 'submodule', 'update', '--init', '--recursive', '--quiet'],
+          cwd=path)
+      assert (IsGitRepoCheckoutOutAtRevision(path, revision))
+      return True
+    except (subprocess.CalledProcessError, OSError) as error:
+      if attempt == max_attempts:
+        raise error
+      logging.error(error)
+      logging.info('Retrying after removing partial git checkout: %s', path)
+      RmtreeIfExists(path)
+      time.sleep(attempt * 3)
 
 
 def InstallNodeModules(force_clean=False):
