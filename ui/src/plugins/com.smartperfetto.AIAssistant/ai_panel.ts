@@ -1818,6 +1818,34 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     });
   }
 
+  private isSseStatusMessage(message: Message | undefined): boolean {
+    if (!message || message.role !== 'assistant') return false;
+    return message.content.startsWith('🔄') ||
+      message.content.startsWith('连接中断') ||
+      message.content.startsWith('正在恢复会话') ||
+      message.content.startsWith('后端已重启') ||
+      message.content.startsWith('后端连接') ||
+      message.content.startsWith('**Connection Error:**');
+  }
+
+  private upsertSseStatusMessage(content: string): void {
+    const lastMsg = this.state.messages[this.state.messages.length - 1];
+    if (this.isSseStatusMessage(lastMsg)) {
+      lastMsg!.content = content;
+      this.saveHistory();
+      this.saveCurrentSession();
+      this.scrollToBottom(true);
+      return;
+    }
+
+    this.addMessage({
+      id: this.generateId(),
+      role: 'assistant',
+      content,
+      timestamp: Date.now(),
+    });
+  }
+
   /**
    * 从旧的 HISTORY_KEY 迁移数据到新的 Session 格式
    * 仅在首次加载时调用，用于向后兼容
@@ -3256,6 +3284,82 @@ Output MUST follow this exact markdown structure:
     }
   }
 
+  private async tryRecoverMissingSseSession(
+    sessionId: string
+  ): Promise<'restored' | 'notRecoverable' | 'transientError'> {
+    if (!this.state.backendTraceId) {
+      return 'notRecoverable';
+    }
+
+    try {
+      this.upsertSseStatusMessage('正在恢复会话：后端可能刚刚重启，正在重新绑定分析上下文。');
+      m.redraw();
+
+      const response = await this.fetchBackend(buildAssistantApiV1Url(this.state.settings.backendUrl, '/resume'), {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          sessionId,
+          traceId: this.state.backendTraceId,
+        }),
+      });
+
+      if (response.ok) {
+        const resumeData = await response.json().catch(() => ({} as any));
+        const requestIdFromHeader = response.headers.get('x-request-id') || '';
+        this.state.agentSessionId = sessionId;
+        this.state.sseLastEventId = null;
+        if (this.applyAgentObservability({
+          ...resumeData,
+          requestId: resumeData.requestId || requestIdFromHeader,
+        })) {
+          if (DEBUG_AI_PANEL) console.log('[AIPanel] Agent observability updated from SSE resume:', {
+            runId: this.state.agentRunId,
+            requestId: this.state.agentRequestId,
+            runSequence: this.state.agentRunSequence,
+          });
+        }
+        this.upsertSseStatusMessage('后端已重启，已恢复会话，正在重新连接结果流。');
+        this.saveCurrentSession();
+        m.redraw();
+        return 'restored';
+      }
+
+      const errorData = await response.json().catch(() => ({} as any));
+      const code = String(errorData?.code || '');
+      const errorText = String(errorData?.error || '');
+      if (
+        response.status === 404 ||
+        code === 'TRACE_ID_MISMATCH' ||
+        code === 'TRACE_NOT_UPLOADED' ||
+        errorText.includes('Session not found')
+      ) {
+        this.state.agentSessionId = null;
+        this.state.sseLastEventId = null;
+        this.state.sseConnectionState = 'disconnected';
+        this.clearAgentObservability();
+        this.setLoadingState(false);
+        const content = code === 'TRACE_NOT_UPLOADED'
+          ? '后端已重启，当前 Trace 需要重新连接。请点击右上角“重试连接”重新上传 Trace 后再分析。'
+          : '后端已重启，当前分析会话无法恢复。本次流式分析已停止，请重新发起分析。';
+        this.upsertSseStatusMessage(content);
+        this.saveCurrentSession();
+        m.redraw();
+        return 'notRecoverable';
+      }
+
+      console.warn('[AIPanel] SSE session recovery returned retryable error:', {
+        status: response.status,
+        code,
+        errorText,
+      });
+      return 'transientError';
+    } catch (error) {
+      console.warn('[AIPanel] SSE session recovery failed:', error);
+      return 'transientError';
+    }
+  }
+
   private async handleChatMessage(message: string) {
     if (DEBUG_AI_PANEL) console.log('[AIPanel] handleChatMessage called with:', message);
     if (DEBUG_AI_PANEL) console.log('[AIPanel] backendTraceId:', this.state.backendTraceId);
@@ -3500,6 +3604,7 @@ Output MUST follow this exact markdown structure:
     m.redraw();
 
     // Main connection loop with retry logic
+    let attemptedSessionRecovery = false;
     while (this.state.sseRetryCount <= this.state.sseMaxRetries) {
       try {
         // Check if aborted before attempting connection
@@ -3515,17 +3620,23 @@ Output MUST follow this exact markdown structure:
 
         const response = await this.fetchBackend(apiUrl, { signal });
         if (!response.ok) {
+          if (response.status === 404 && !attemptedSessionRecovery) {
+            attemptedSessionRecovery = true;
+            const recovery = await this.tryRecoverMissingSseSession(sessionId);
+            if (recovery === 'restored') {
+              continue;
+            }
+            if (recovery === 'notRecoverable') {
+              return;
+            }
+          }
+
           // P2-2: 4xx errors are not transient (bad request, not found, etc.) — don't retry
           if (response.status >= 400 && response.status < 500) {
             console.error(`[AIPanel] SSE got ${response.status} — not retryable, giving up`);
             this.state.sseConnectionState = 'disconnected';
             this.setLoadingState(false);
-            this.addMessage({
-              id: this.generateId(),
-              role: 'assistant',
-              content: `**Connection Error:** ${response.status} ${response.statusText}`,
-              timestamp: Date.now(),
-            });
+            this.upsertSseStatusMessage(`后端连接失败：${response.status} ${response.statusText}`);
             m.redraw();
             return;
           }
@@ -3646,12 +3757,9 @@ Output MUST follow this exact markdown structure:
           console.error('[AIPanel] SSE max retries exceeded, giving up');
           this.state.sseConnectionState = 'disconnected';
           this.setLoadingState(false);
-          this.addMessage({
-            id: this.generateId(),
-            role: 'assistant',
-            content: `**Connection Error:** ${e.message || 'Lost connection to Agent backend'}\n\nFailed to reconnect after ${this.state.sseMaxRetries} attempts. Please try again.`,
-            timestamp: Date.now(),
-          });
+          this.upsertSseStatusMessage(
+            `后端连接失败：${e.message || 'Agent 后端连接中断'}\n\n已重试 ${this.state.sseMaxRetries} 次，请重新发起分析。`
+          );
           m.redraw();
           return;
         }
@@ -3663,18 +3771,9 @@ Output MUST follow this exact markdown structure:
         if (DEBUG_AI_PANEL) console.log(`[AIPanel] SSE reconnecting in ${delay}ms (attempt ${this.state.sseRetryCount}/${this.state.sseMaxRetries})`);
 
         // Update UI to show reconnecting status
-        // Find and update any existing reconnecting message, or add new one
-        const lastMsg = this.state.messages[this.state.messages.length - 1];
-        if (lastMsg && lastMsg.role === 'assistant' && lastMsg.content.startsWith('🔄')) {
-          lastMsg.content = `🔄 Connection lost. Reconnecting... (attempt ${this.state.sseRetryCount}/${this.state.sseMaxRetries})`;
-        } else {
-          this.addMessage({
-            id: this.generateId(),
-            role: 'assistant',
-            content: `🔄 Connection lost. Reconnecting... (attempt ${this.state.sseRetryCount}/${this.state.sseMaxRetries})`,
-            timestamp: Date.now(),
-          });
-        }
+        this.upsertSseStatusMessage(
+          `连接中断，正在重连...（第 ${this.state.sseRetryCount}/${this.state.sseMaxRetries} 次）`
+        );
         m.redraw();
 
         // Wait before retrying (unless aborted)
