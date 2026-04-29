@@ -3198,7 +3198,7 @@ Output MUST follow this exact markdown structure:
         m('span.sp-meta-pill', {
           style: 'cursor:pointer',
           title: 'Jump to timestamp',
-          onclick: () => this.trace!.timeline.panToTimestamp(BigInt(info.ts)),
+          onclick: () => this.trace!.timeline.panIntoView(Time.fromRaw(BigInt(info.ts))),
         }, [`📍 `, `${(info.ts / 1e6).toFixed(1)}ms`]),
       ]),
       m('div.sp-sel-card-actions', [
