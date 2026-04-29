@@ -66,6 +66,7 @@ import {
   SelectionTrackInfo,
   SliceCardInfo,
   AreaCardInfo,
+  TraceDataset,
 } from './types';
 // Agent-Driven Architecture v2.0 - Intervention Panel
 import {InterventionPanel, DEFAULT_INTERVENTION_STATE} from './intervention_panel';
@@ -222,6 +223,7 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     areaCardInfo: null,
     sliceCardPrevSelId: '',
     sliceCardDismissed: false,
+    pendingTraceContext: null,
   };
 
   private unsubscribeClearChat?: () => void;
@@ -3026,6 +3028,105 @@ Output MUST follow this exact markdown structure:
   /**
    * Detect selection changes (called from view()) and trigger async slice/area info query.
    */
+  /**
+   * Pre-query trace data for the current selection, mirroring smartperfetto's querySelectionData.
+   * Results are sent with the request so the AI doesn't need to spend turns fetching basics.
+   */
+  private async querySelectionData(): Promise<TraceDataset[]> {
+    if (!this.engine || !this.trace) return [];
+    const sel = this.trace.selection.selection;
+    const datasets: TraceDataset[] = [];
+
+    const runQuery = async (label: string, sql: string, schema: Record<string, any>): Promise<void> => {
+      try {
+        const result = await this.engine!.query(sql);
+        const columns = Object.keys(schema);
+        const rows: unknown[][] = [];
+        for (const it = result.iter(schema); it.valid(); it.next()) {
+          rows.push(columns.map(c => {
+            const v = (it as any)[c];
+            return typeof v === 'bigint' ? Number(v) : (v ?? null);
+          }));
+        }
+        if (rows.length > 0) datasets.push({ label, columns, rows });
+      } catch { /* ignore — table may not exist */ }
+    };
+
+    if (sel.kind === 'track_event') {
+      const id = sel.eventId;
+      const tsNs = Number(sel.ts);
+      const durNs = sel.dur !== undefined ? Number(sel.dur) : 0;
+      const endNs = tsNs + durNs;
+
+      // 1) Slice details + thread/process
+      await runQuery(`slice id=${id}`, `
+        SELECT s.id, s.name, s.ts, s.dur, CAST(s.dur/1e6 AS REAL) as dur_ms,
+          t.name as thread_name, p.name as process_name, s.depth, t.utid, t.tid
+        FROM slice s
+        LEFT JOIN thread_track tt ON s.track_id = tt.id
+        LEFT JOIN thread t ON tt.utid = t.utid
+        LEFT JOIN process p ON t.upid = p.upid
+        WHERE s.id = ${id}
+      `, { id: NUM_NULL, name: STR_NULL, ts: LONG, dur: LONG, dur_ms: NUM_NULL,
+           thread_name: STR_NULL, process_name: STR_NULL, depth: NUM_NULL, utid: NUM_NULL, tid: NUM_NULL });
+
+      // 2) Ancestor chain (up to 10 levels)
+      await runQuery(`caller chain of slice ${id}`, `
+        WITH RECURSIVE ancestors(id, parent_id, name, dur, depth) AS (
+          SELECT id, parent_id, name, dur, depth FROM slice WHERE id = ${id}
+          UNION ALL
+          SELECT s.id, s.parent_id, s.name, s.dur, s.depth
+          FROM slice s JOIN ancestors a ON s.id = a.parent_id LIMIT 10
+        )
+        SELECT id, name, CAST(dur/1e6 AS REAL) as dur_ms, depth
+        FROM ancestors WHERE id != ${id} ORDER BY depth ASC
+      `, { id: NUM_NULL, name: STR_NULL, dur_ms: NUM_NULL, depth: NUM_NULL });
+
+      // 3) Direct children (call tree)
+      await runQuery(`children of slice ${id}`, `
+        SELECT id, name, CAST(dur/1e6 AS REAL) as dur_ms, depth,
+          ROUND(dur * 100.0 / NULLIF((SELECT dur FROM slice WHERE id = ${id}), 0), 1) as pct
+        FROM slice WHERE parent_id = ${id} ORDER BY dur DESC LIMIT 50
+      `, { id: NUM_NULL, name: STR_NULL, dur_ms: NUM_NULL, depth: NUM_NULL, pct: NUM_NULL });
+
+      // 4) Thread state distribution
+      if (durNs > 0) {
+        await runQuery(`thread state during slice ${id}`, `
+          SELECT cpu, state, COUNT(*) AS cnt, CAST(SUM(dur)/1e6 AS REAL) as total_ms,
+            CAST(SUM(dur)*100.0/${durNs} AS REAL) as pct
+          FROM thread_state
+          WHERE utid = (SELECT tt.utid FROM slice s JOIN thread_track tt ON s.track_id=tt.id WHERE s.id=${id})
+            AND ts >= ${tsNs} AND ts <= ${endNs}
+          GROUP BY cpu, state ORDER BY total_ms DESC
+        `, { cpu: NUM_NULL, state: STR_NULL, cnt: NUM_NULL, total_ms: NUM_NULL, pct: NUM_NULL });
+      }
+
+    } else if (sel.kind === 'area') {
+      const startNs = Number(sel.start);
+      const endNs = Number(sel.end);
+
+      // Top slices by total duration
+      await runQuery(`top slices in range`, `
+        SELECT s.name, COUNT(*) as cnt, CAST(SUM(s.dur)/1e6 AS REAL) as total_ms,
+          CAST(AVG(s.dur)/1e6 AS REAL) as avg_ms
+        FROM slice s
+        WHERE s.ts >= ${startNs} AND s.ts + s.dur <= ${endNs} AND s.dur > 0
+        GROUP BY s.name ORDER BY total_ms DESC LIMIT 20
+      `, { name: STR_NULL, cnt: NUM_NULL, total_ms: NUM_NULL, avg_ms: NUM_NULL });
+
+      // Thread state summary
+      await runQuery(`thread states in range`, `
+        SELECT t.name as thread_name, ts.state,
+          CAST(SUM(ts.dur)/1e6 AS REAL) as total_ms
+        FROM thread_state ts JOIN thread t ON ts.utid = t.utid
+        WHERE ts.ts >= ${startNs} AND ts.ts <= ${endNs}
+        GROUP BY t.name, ts.state ORDER BY total_ms DESC LIMIT 30
+      `, { thread_name: STR_NULL, state: STR_NULL, total_ms: NUM_NULL });
+    }
+
+    return datasets;
+  }
+
   private updateSliceCard(): void {
     if (!this.trace) return;
     const sel = this.trace.selection.selection;
@@ -3073,7 +3174,11 @@ Output MUST follow this exact markdown structure:
     const onAction = (query: string) => {
       this.state.sliceCardDismissed = true;
       this.state.input = query;
-      setTimeout(() => this.sendMessage(), 0);
+      // Pre-query trace data before sending — result stored in pendingTraceContext
+      this.querySelectionData().then((datasets) => {
+        this.state.pendingTraceContext = datasets.length > 0 ? datasets : null;
+        this.sendMessage();
+      });
     };
 
     return m('div.sp-sel-card', [
@@ -3135,7 +3240,10 @@ Output MUST follow this exact markdown structure:
     const onAction = (query: string) => {
       this.state.sliceCardDismissed = true;
       this.state.input = query;
-      setTimeout(() => this.sendMessage(), 0);
+      this.querySelectionData().then((datasets) => {
+        this.state.pendingTraceContext = datasets.length > 0 ? datasets : null;
+        this.sendMessage();
+      });
     };
 
     return m('div.sp-sel-card', [
@@ -3215,15 +3323,29 @@ Output MUST follow this exact markdown structure:
     }
 
     if (sel.kind === 'track_event') {
-      return {
+      // Reuse pre-queried sliceCardInfo if it matches current selection (avoids redundant SQL)
+      const cardInfo = this.state.sliceCardInfo?.id === sel.eventId
+        ? this.state.sliceCardInfo
+        : null;
+      const ctx: SelectionContext = {
         kind: 'track_event',
         trackUri: sel.trackUri,
         eventId: sel.eventId,
         ts: Number(sel.ts),
         dur: sel.dur !== undefined ? Number(sel.dur) : undefined,
       };
+      if (cardInfo) {
+        ctx.name = cardInfo.name;
+        ctx.threadName = cardInfo.threadName;
+        ctx.processName = cardInfo.processName;
+        ctx.depth = cardInfo.depth;
+        ctx.childCount = cardInfo.childCount;
+      }
+      console.log('[AIPanel] captureSelectionContext: track_event captured', ctx);
+      return ctx;
     }
 
+    console.log('[AIPanel] captureSelectionContext: no selection (kind=' + sel.kind + '), returning null');
     return null;
   }
 
@@ -3690,6 +3812,12 @@ Output MUST follow this exact markdown structure:
       if (selectionContext) {
         requestBody.selectionContext = selectionContext;
         if (DEBUG_AI_PANEL) console.log('[AIPanel] Injecting selectionContext:', selectionContext);
+      }
+
+      // Attach pre-queried trace data (set by quick-action buttons) and consume it
+      if (this.state.pendingTraceContext) {
+        requestBody.traceContext = this.state.pendingTraceContext;
+        this.state.pendingTraceContext = null;
       }
 
       // Include agentSessionId if available for multi-turn dialogue

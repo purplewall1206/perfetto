@@ -335,6 +335,15 @@ export interface AIPanelState {
   areaCardInfo: AreaCardInfo | null;    // Queried area metadata for the card
   sliceCardPrevSelId: string;           // Last seen selection key for diff detection
   sliceCardDismissed: boolean;          // Whether user dismissed the card
+  // Pre-queried trace context to attach to next request (set by quick-action buttons)
+  pendingTraceContext: TraceDataset[] | null;
+}
+
+/** A pre-queried trace dataset sent to the backend alongside the query. */
+export interface TraceDataset {
+  label: string;        // Human-readable description of the SQL
+  columns: string[];
+  rows: unknown[][];
 }
 
 export interface SliceCardInfo {
@@ -513,6 +522,12 @@ export interface SelectionContext {
   eventId?: number;
   ts?: number;
   dur?: number;
+  // Pre-queried metadata from frontend (avoids first SQL turn in AI)
+  name?: string;
+  threadName?: string;
+  processName?: string;
+  depth?: number;
+  childCount?: number;
 }
 
 /** Human-readable metadata for a track in an area selection. */
