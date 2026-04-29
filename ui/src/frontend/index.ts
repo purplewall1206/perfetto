@@ -174,6 +174,7 @@ function setupContentSecurityPolicy() {
       'https:', // Allow any HTTPS; service worker firewall adds granular filtering.
       'http://localhost:3000', // For SmartPerfetto AI backend.
       'http://127.0.0.1:3000', // For SmartPerfetto AI backend.
+      `http://${location.hostname}:3000`, // For SmartPerfetto AI backend (remote access).
       'https://*.google-analytics.com',
       'https://*.googleapis.com', // For Google Cloud Storage fetches.
       'blob:',
