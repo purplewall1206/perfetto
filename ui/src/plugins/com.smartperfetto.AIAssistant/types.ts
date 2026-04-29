@@ -459,7 +459,7 @@ export const DEFAULT_SETTINGS: AISettings = {
   openaiApiKey: '',
   deepseekModel: 'deepseek-chat',
   deepseekApiKey: '',
-  backendUrl: 'http://localhost:3000',
+  backendUrl: `${location.protocol}//${location.hostname}:3000`,
   backendApiKey: '',
 };
 
