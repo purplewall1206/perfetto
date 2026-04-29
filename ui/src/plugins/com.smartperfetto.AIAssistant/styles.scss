@@ -885,6 +885,103 @@
 }
 
 // ----------------------------------------------------------------------------
+// Slice Selected Card
+
+.sp-sel-card {
+  margin: 4px 8px 6px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sp-sel-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: #dbeafe;
+  border-bottom: 1px solid #bfdbfe;
+}
+
+.sp-sel-card-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #1e3a8a;
+}
+
+.sp-sel-card-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+
+  &:hover { color: #374151; }
+}
+
+.sp-sel-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 10px;
+}
+
+.sp-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  background: #fff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  font-size: 11px;
+  color: #1e40af;
+  white-space: nowrap;
+
+  strong { font-weight: 600; }
+}
+
+.sp-sel-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 5px 10px 9px;
+}
+
+.sp-action-btn {
+  padding: 4px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s;
+  white-space: nowrap;
+
+  &:disabled { opacity: 0.4; cursor: default; }
+}
+
+.sp-action-btn--primary {
+  background: #2563eb;
+  color: #fff;
+  border-color: #2563eb;
+
+  &:hover:not(:disabled) { background: #1d4ed8; }
+}
+
+.sp-action-btn--secondary {
+  background: #fff;
+  color: #1e40af;
+  border-color: #bfdbfe;
+
+  &:hover:not(:disabled) { background: #dbeafe; }
+}
+
+// ----------------------------------------------------------------------------
 // Input Area
 // ----------------------------------------------------------------------------
 

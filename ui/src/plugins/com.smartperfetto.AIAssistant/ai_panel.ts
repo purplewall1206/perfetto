@@ -29,6 +29,7 @@ import {
   needsActiveDisambiguation,
 } from './auto_pin_utils';
 import {Engine} from '../../trace_processor/engine';
+import {LONG, NUM_NULL, STR_NULL} from '../../trace_processor/query_result';
 import {Trace} from '../../public/trace';
 import {HttpRpcEngine} from '../../trace_processor/http_rpc_engine';
 import {AppImpl} from '../../core/app_impl';
@@ -63,6 +64,8 @@ import {
   COMPARISON_PRESET_QUESTIONS,
   SelectionContext,
   SelectionTrackInfo,
+  SliceCardInfo,
+  AreaCardInfo,
 } from './types';
 // Agent-Driven Architecture v2.0 - Intervention Panel
 import {InterventionPanel, DEFAULT_INTERVENTION_STATE} from './intervention_panel';
@@ -214,6 +217,11 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
       } catch { /* ignore — private browsing or storage quota */ }
       return 'auto';
     })(),
+    // Slice Selected card
+    sliceCardInfo: null,
+    areaCardInfo: null,
+    sliceCardPrevSelId: '',
+    sliceCardDismissed: false,
   };
 
   private unsubscribeClearChat?: () => void;
@@ -861,6 +869,9 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
   }
 
   view(vnode: m.Vnode<AIPanelAttrs>) {
+    // Detect selection changes and update slice card state.
+    this.updateSliceCard();
+
     // AI Everywhere: consume pending selection analysis (one-shot, Codex #4).
     // Read + clear atomically to prevent re-trigger on the next redraw.
     const pending = getAISharedState().pendingSelectionAnalysis;
@@ -1609,6 +1620,8 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
                 ? m('div.ai-context-indicator',
                   `第 ${this.state.messages.filter(msg => msg.role === 'user').length} 轮对话 | 会话 ${this.state.agentSessionId.substring(0, 8)}...`)
                 : null,
+              this.renderSliceCard(),
+              this.renderAreaCard(),
               this.renderAnalysisModeChips(),
               m('div.ai-input-wrapper', [
                 m('textarea#ai-input.ai-input', {
@@ -2015,6 +2028,12 @@ export class AIPanel implements m.ClassComponent<AIPanelAttrs> {
     } else {
       // Not in RPC mode or no backendTraceId - clear it
       this.state.backendTraceId = null;
+    }
+
+    // If the session's backendTraceId differs from current, agentSessionId belongs to a
+    // different trace — clear it to prevent traceId mismatch errors on the next request.
+    if (session.backendTraceId && this.state.backendTraceId !== session.backendTraceId) {
+      this.state.agentSessionId = null;
     }
 
     // 恢复命令历史
@@ -2916,6 +2935,260 @@ Output MUST follow this exact markdown structure:
   /**
    * Capture the current Perfetto UI selection and resolve track metadata.
    * Returns null if nothing is selected.
+  /**
+   * Query slice metadata for the Slice Selected card.
+   * Called when selection changes to a track_event.
+   */
+  private async querySliceCardInfo(eventId: number): Promise<SliceCardInfo | null> {
+    if (!this.engine) return null;
+    try {
+      const result = await this.engine.query(`
+        SELECT s.id, s.name, s.ts, s.dur,
+          CAST(s.dur / 1e6 AS REAL) as dur_ms,
+          COALESCE(t.name, '') as thread_name,
+          COALESCE(p.name, '') as process_name,
+          s.depth,
+          (SELECT COUNT(*) FROM slice c WHERE c.parent_id = s.id) as child_count
+        FROM slice s
+        LEFT JOIN thread_track tt ON s.track_id = tt.id
+        LEFT JOIN thread t ON tt.utid = t.utid
+        LEFT JOIN process p ON t.upid = p.upid
+        WHERE s.id = ${eventId}
+      `);
+      const it = result.iter({
+        id: NUM_NULL, name: STR_NULL, ts: LONG, dur: LONG, dur_ms: NUM_NULL,
+        thread_name: STR_NULL, process_name: STR_NULL, depth: NUM_NULL, child_count: NUM_NULL,
+      });
+      if (!it.valid()) return null;
+      return {
+        id: Number(it.id ?? 0),
+        name: String(it.name ?? ''),
+        ts: Number(it.ts),
+        dur: Number(it.dur),
+        durMs: Number(it.dur_ms ?? 0),
+        threadName: String(it.thread_name ?? ''),
+        processName: String(it.process_name ?? ''),
+        depth: Number(it.depth ?? 0),
+        childCount: Number(it.child_count ?? 0),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Query area metadata for the Area Selected card.
+   */
+  private async queryAreaCardInfo(startNs: number, endNs: number): Promise<AreaCardInfo> {
+    const durationMs = (endNs - startNs) / 1e6;
+    let sliceCount = 0;
+    let trackCount = 0;
+    let jankCount = 0;
+    const topSlices: Array<{ name: string; durMs: number; count: number }> = [];
+
+    if (!this.engine) return { startNs, endNs, durationMs, sliceCount, trackCount, topSlices, hasJank: false, jankCount };
+
+    try {
+      const r = await this.engine.query(`
+        SELECT COUNT(*) as cnt, COUNT(DISTINCT s.track_id) as tracks
+        FROM slice s
+        WHERE s.ts >= ${startNs} AND s.ts + s.dur <= ${endNs} AND s.dur > 0
+      `);
+      const it = r.iter({ cnt: NUM_NULL, tracks: NUM_NULL });
+      if (it.valid()) { sliceCount = Number(it.cnt ?? 0); trackCount = Number(it.tracks ?? 0); }
+    } catch { /* ignore */ }
+
+    try {
+      const r = await this.engine.query(`
+        SELECT s.name, COUNT(*) as cnt, CAST(SUM(s.dur)/1e6 AS REAL) as total_ms
+        FROM slice s
+        WHERE s.ts >= ${startNs} AND s.ts + s.dur <= ${endNs} AND s.dur > 0
+        GROUP BY s.name ORDER BY total_ms DESC LIMIT 5
+      `);
+      for (const it = r.iter({ name: STR_NULL, cnt: NUM_NULL, total_ms: NUM_NULL }); it.valid(); it.next()) {
+        topSlices.push({ name: String(it.name ?? ''), durMs: Number(it.total_ms ?? 0), count: Number(it.cnt ?? 0) });
+      }
+    } catch { /* ignore */ }
+
+    try {
+      const r = await this.engine.query(`
+        SELECT COUNT(*) as cnt FROM actual_frame_timeline_slice
+        WHERE ts >= ${startNs} AND ts + dur <= ${endNs}
+          AND jank_type IS NOT NULL AND jank_type != 'None'
+      `);
+      const it = r.iter({ cnt: NUM_NULL });
+      if (it.valid()) jankCount = Number(it.cnt ?? 0);
+    } catch { /* ignore */ }
+
+    return { startNs, endNs, durationMs, sliceCount, trackCount, topSlices, hasJank: jankCount > 0, jankCount };
+  }
+
+  /**
+   * Detect selection changes (called from view()) and trigger async slice/area info query.
+   */
+  private updateSliceCard(): void {
+    if (!this.trace) return;
+    const sel = this.trace.selection.selection;
+    const selKey = sel.kind === 'track_event' ? `te-${sel.eventId}`
+      : sel.kind === 'area' ? `area-${Number(sel.start)}-${Number(sel.end)}`
+      : 'none';
+    if (selKey === this.state.sliceCardPrevSelId) return;
+    this.state.sliceCardPrevSelId = selKey;
+    this.state.sliceCardDismissed = false;
+    this.state.sliceCardInfo = null;
+    this.state.areaCardInfo = null;
+    if (sel.kind === 'track_event') {
+      this.querySliceCardInfo(sel.eventId).then((info) => {
+        this.state.sliceCardInfo = info;
+        m.redraw();
+      });
+    } else if (sel.kind === 'area') {
+      this.queryAreaCardInfo(Number(sel.start), Number(sel.end)).then((info) => {
+        this.state.areaCardInfo = info;
+        m.redraw();
+      });
+    }
+  }
+
+  private fmtDurMs(ms: number): string {
+    if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
+    if (ms >= 1) return `${ms.toFixed(2)}ms`;
+    return `${(ms * 1000).toFixed(0)}μs`;
+  }
+
+  /**
+   * Render the Slice Selected card above the input box.
+   */
+  private renderSliceCard(): m.Vnode | null {
+    if (!this.trace) return null;
+    const sel = this.trace.selection.selection;
+    if (sel.kind !== 'track_event') return null;
+    if (this.state.sliceCardDismissed) return null;
+    const info = this.state.sliceCardInfo;
+    if (!info) return null;
+
+    const dur = this.fmtDurMs(info.durMs);
+    const isSlow = info.durMs >= 16;
+
+    const onAction = (query: string) => {
+      this.state.sliceCardDismissed = true;
+      this.state.input = query;
+      setTimeout(() => this.sendMessage(), 0);
+    };
+
+    return m('div.sp-sel-card', [
+      m('div.sp-sel-card-header', [
+        m('span.sp-sel-card-title', `⬛ Slice Selected${isSlow ? ' ⚠️' : ''}`),
+        m('button.sp-sel-card-dismiss', {
+          onclick: () => { this.state.sliceCardDismissed = true; m.redraw(); },
+          title: 'Dismiss',
+        }, '✕'),
+      ]),
+      m('div.sp-sel-card-meta', [
+        m('span.sp-meta-pill', [m('strong', info.name)]),
+        m('span.sp-meta-pill', ['⏱ ', m('strong', dur)]),
+        info.threadName ? m('span.sp-meta-pill', ['🧵 ', info.threadName]) : null,
+        info.processName ? m('span.sp-meta-pill', ['📦 ', info.processName]) : null,
+        info.childCount > 0 ? m('span.sp-meta-pill', ['🌿 ', `${info.childCount} children`]) : null,
+        m('span.sp-meta-pill', {
+          style: 'cursor:pointer',
+          title: 'Jump to timestamp',
+          onclick: () => this.trace!.timeline.panToTimestamp(BigInt(info.ts)),
+        }, [`📍 `, `${(info.ts / 1e6).toFixed(1)}ms`]),
+      ]),
+      m('div.sp-sel-card-actions', [
+        m('button.sp-action-btn.sp-action-btn--primary', {
+          onclick: () => onAction(`分析这个 Slice：${info.name}（${dur}），找出性能问题和根因`),
+          disabled: this.state.isLoading,
+        }, '🔍 分析此 Slice'),
+        m('button.sp-action-btn.sp-action-btn--secondary', {
+          onclick: () => onAction(`找出 "${info.name}" 耗时 ${dur} 的根本原因，分析调用链和子调用`),
+          disabled: this.state.isLoading,
+        }, '🔎 找根因'),
+        m('button.sp-action-btn.sp-action-btn--secondary', {
+          onclick: () => onAction(`展示 "${info.name}" 的完整调用链，包括父调用和子调用，并找出最耗时的部分`),
+          disabled: this.state.isLoading,
+        }, '📊 调用链'),
+        isSlow ? m('button.sp-action-btn.sp-action-btn--secondary', {
+          onclick: () => onAction(`"${info.name}" 耗时 ${dur} 超过帧预算（16ms），分析为什么会卡顿`),
+          disabled: this.state.isLoading,
+        }, '🚨 卡顿分析') : null,
+      ]),
+    ]);
+  }
+
+  /**
+   * Render the Area Selected card above the input box.
+   */
+  private renderAreaCard(): m.Vnode | null {
+    if (!this.trace) return null;
+    const sel = this.trace.selection.selection;
+    if (sel.kind !== 'area') return null;
+    if (this.state.sliceCardDismissed) return null;
+    const info = this.state.areaCardInfo;
+    if (!info) return null;
+
+    const startMs = (info.startNs / 1e6).toFixed(1);
+    const endMs = (info.endNs / 1e6).toFixed(1);
+    const dur = this.fmtDurMs(info.durationMs);
+
+    const onAction = (query: string) => {
+      this.state.sliceCardDismissed = true;
+      this.state.input = query;
+      setTimeout(() => this.sendMessage(), 0);
+    };
+
+    return m('div.sp-sel-card', [
+      m('div.sp-sel-card-header', [
+        m('span.sp-sel-card-title', `⬜ 时间范围选中${info.hasJank ? ' ⚠️ Jank' : ''}`),
+        m('button.sp-sel-card-dismiss', {
+          onclick: () => { this.state.sliceCardDismissed = true; m.redraw(); },
+          title: 'Dismiss',
+        }, '✕'),
+      ]),
+      m('div.sp-sel-card-meta', [
+        m('span.sp-meta-pill', ['⏱ ', m('strong', dur)]),
+        m('span.sp-meta-pill', ['📍 ', `${startMs}ms – ${endMs}ms`]),
+        info.sliceCount > 0 ? m('span.sp-meta-pill', ['📋 ', `${info.sliceCount} slices`]) : null,
+        info.trackCount > 0 ? m('span.sp-meta-pill', ['🎛 ', `${info.trackCount} tracks`]) : null,
+        info.hasJank ? m('span.sp-meta-pill', {
+          style: 'background:#fef2f2;border-color:#fca5a5;color:#b91c1c',
+        }, ['⚠️ ', `${info.jankCount} jank frames`]) : null,
+      ]),
+      info.topSlices.length > 0
+        ? m('div', { style: 'padding: 0 10px 5px; font-size:11px; color:#6b7280' }, [
+            'Top: ',
+            info.topSlices.slice(0, 3).map((s, i) =>
+              m('span', { style: 'margin-right:6px' }, [
+                i > 0 ? '· ' : '',
+                m('strong', s.name.length > 30 ? s.name.slice(0, 30) + '…' : s.name),
+                ` (${this.fmtDurMs(s.durMs)})`,
+              ]),
+            ),
+          ])
+        : null,
+      m('div.sp-sel-card-actions', [
+        m('button.sp-action-btn.sp-action-btn--primary', {
+          onclick: () => onAction(`分析 ${startMs}ms–${endMs}ms 这段时间范围（${dur}），找出性能瓶颈`),
+          disabled: this.state.isLoading,
+        }, '🔍 分析此时间段'),
+        info.hasJank ? m('button.sp-action-btn.sp-action-btn--secondary', {
+          onclick: () => onAction(`分析 ${startMs}ms–${endMs}ms 范围内的 ${info.jankCount} 个 Jank 帧，找出卡顿根因`),
+          disabled: this.state.isLoading,
+        }, '🚨 找卡顿原因') : null,
+        m('button.sp-action-btn.sp-action-btn--secondary', {
+          onclick: () => onAction(`找出 ${startMs}ms–${endMs}ms 时间段内主线程的耗时操作`),
+          disabled: this.state.isLoading,
+        }, '🧵 主线程分析'),
+        m('button.sp-action-btn.sp-action-btn--secondary', {
+          onclick: () => onAction(`分析 ${startMs}ms–${endMs}ms 内的 Binder 调用和锁竞争`),
+          disabled: this.state.isLoading,
+        }, '🔗 Binder/锁'),
+      ]),
+    ]);
+  }
+
+  /**
    * Called on every handleChatMessage() so the backend always gets the latest selection.
    */
   private async captureSelectionContext(): Promise<SelectionContext | null> {

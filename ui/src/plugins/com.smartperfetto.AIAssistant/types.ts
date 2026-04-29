@@ -330,6 +330,34 @@ export interface AIPanelState {
   /** Analysis mode toggle: 'fast' (quick path) / 'full' (pipeline) / 'auto' (classifier-driven).
    *  Persisted in localStorage under ANALYSIS_MODE_KEY. */
   analysisMode: 'fast' | 'full' | 'auto';
+  // Slice Selected card state
+  sliceCardInfo: SliceCardInfo | null;  // Queried slice metadata for the card
+  areaCardInfo: AreaCardInfo | null;    // Queried area metadata for the card
+  sliceCardPrevSelId: string;           // Last seen selection key for diff detection
+  sliceCardDismissed: boolean;          // Whether user dismissed the card
+}
+
+export interface SliceCardInfo {
+  id: number;
+  name: string;
+  ts: number;
+  dur: number;
+  durMs: number;
+  threadName: string;
+  processName: string;
+  depth: number;
+  childCount: number;
+}
+
+export interface AreaCardInfo {
+  startNs: number;
+  endNs: number;
+  durationMs: number;
+  sliceCount: number;
+  trackCount: number;
+  topSlices: Array<{ name: string; durMs: number; count: number }>;
+  hasJank: boolean;
+  jankCount: number;
 }
 
 /**
